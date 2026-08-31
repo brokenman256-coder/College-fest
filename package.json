@@ -1,0 +1,14 @@
+{
+  "name": "college-fest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Campus experience board — anonymous to students, identified to admins. Real views only.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
