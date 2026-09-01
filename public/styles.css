@@ -154,6 +154,15 @@ article.post-full .body{font-size:18px;line-height:1.7;color:var(--text);white-s
 .auth-switch-btn:hover{color:#fff}
 .fine{font-size:12px;color:var(--muted);margin-top:8px}
 
+/* ---------- admin chooser (admins only) ---------- */
+.admin-choose{min-height:70vh}
+.logo-img{width:24px;height:24px;border-radius:6px;margin-right:9px;vertical-align:-5px;background:var(--card-2);border:1px solid var(--border)}
+header.top h1 a.has-logo::before{display:none}
+.logo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}
+.logo-grid canvas{width:100%;height:auto;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;background:var(--card-2)}
+.logo-grid canvas:hover{border-color:var(--border-hover)}
+.logo-grid canvas.sel{border-color:var(--accent)}
+
 /* ---------- wallet / payout milestones ---------- */
 .balance-box{text-align:center;padding:24px 18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px}
 .balance-box .usd{font-family:var(--font-mono);font-weight:600;font-size:44px;letter-spacing:-1px;color:var(--accent)}

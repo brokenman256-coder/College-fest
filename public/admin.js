@@ -31,7 +31,7 @@ async function boot() {
   who.textContent = ME && ME.role === 'admin' ? ME.email : 'desk locked';
   nav.innerHTML = '';
   if (!ME || ME.role !== 'admin') return showLogin();
-  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['promos','Promo bot'],['blog','Blog bot'],['audit','Audit']];
+  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['promos','Promo bot'],['access','Access'],['logo','Logo'],['blog','Blog bot'],['audit','Audit']];
   const hash = (location.hash || '#overview').slice(1);
   for (const [id, label] of tabs) {
     const b = document.createElement('button');
@@ -54,6 +54,8 @@ async function boot() {
   if (page === 'events') return showEvents();
   if (page === 'prompts') return showPrompts();
   if (page === 'promos') return showPromos();
+  if (page === 'access') return showAccess();
+  if (page === 'logo') return showLogo();
   if (page === 'blog') return showBlogBot();
   if (page === 'audit') return showAudit();
   showOverview();
@@ -452,6 +454,115 @@ async function showPromos() {
       } else return;
       toast('Done'); showPromos();
     } catch (err) { toast(err.message); }
+  };
+}
+
+async function showAccess() {
+  const d = await api('/api/admin/allowlist');
+  app.innerHTML = `<div class="card">
+    <h3>🔑 Admin access</h3>
+    <p class="meta">Allowlisted emails become admins when they log in with an OTP code. They see the admin / student choice — nobody else does. Remove access anytime.</p>
+    <div class="row">
+      <input id="admEmail" placeholder="gmail to grant admin access" style="max-width:340px">
+      <button class="btn solid" id="admAdd">Grant admin access</button>
+    </div>
+    <table style="margin-top:12px">
+      <tr><th>Email</th><th>Granted by</th><th>When</th><th></th></tr>
+      ${d.list.map((a) => `<tr>
+        <td><b>${esc(a.email)}</b></td>
+        <td class="meta">@${esc(a.added_by || '—')}</td>
+        <td class="meta">${esc((a.created_at || '').slice(0, 10))}</td>
+        <td><button class="btn danger" data-rm="${esc(a.email)}">Revoke</button></td>
+      </tr>`).join('') || '<tr><td colspan="4" class="meta">No extra admins yet.</td></tr>'}
+    </table>
+  </div>`;
+  document.getElementById('admAdd').onclick = async () => {
+    try {
+      await api('/api/admin/allowlist', { method: 'POST', body: { email: document.getElementById('admEmail').value } });
+      toast('Admin access granted');
+      showAccess();
+    } catch (e) { toast(e.message); }
+  };
+  app.onclick = async (e) => {
+    const b = e.target.closest('button[data-rm]'); if (!b) return;
+    if (!confirm('Revoke admin access for ' + b.dataset.rm + '?')) return;
+    try { await api('/api/admin/allowlist-remove', { method: 'POST', body: { email: b.dataset.rm } }); toast('Revoked'); showAccess(); }
+    catch (e) { toast(e.message); }
+  };
+}
+
+async function showLogo() {
+  const d = await api('/api/meta');
+  app.innerHTML = `<div class="card">
+    <h3>🎨 Logo studio</h3>
+    <p class="meta">Generate a logo, or paste an image URL. It appears next to the wordmark on the student site instantly.</p>
+    <div class="row">
+      <div class="stat"><span>Current:</span><br>${d.site_logo ? `<img src="${esc(d.site_logo)}" style="width:64px;height:64px;border-radius:12px;border:1px solid var(--border)" alt="logo">` : '<span class="meta">none (lime dot)</span>'}</div>
+      <div>
+        <label>Letters / wordmark</label>
+        <input id="logoText" value="CF" maxlength="4" style="width:90px">
+      </div>
+      <div>
+        <label>Or paste image URL</label>
+        <input id="logoUrl" placeholder="https://…/logo.png">
+      </div>
+    </div>
+    <div class="logo-grid" id="logoGrid"></div>
+    <div class="row">
+      <button class="btn accent" id="logoSave" disabled>Use selected logo</button>
+      <button class="btn" id="logoUrlSave">Use pasted URL</button>
+      <button class="btn danger" id="logoClear">Remove logo</button>
+    </div>
+  </div>`;
+  const grid = document.getElementById('logoGrid');
+  const text = () => (document.getElementById('logoText').value || 'CF').toUpperCase();
+  const VARIANTS = [
+    { bg: '#C6F24E', fg: '#0B0B0F', shape: 'circle', font: '800 64px Inter,sans-serif' },
+    { bg: '#0B0B0F', fg: '#C6F24E', shape: 'square', font: '400 60px \'Instrument Serif\',serif', border: true },
+    { bg: '#14141A', fg: '#E8E6E1', shape: 'square', font: '400 58px \'Instrument Serif\',serif', border: true },
+    { bg: '#C6F24E', fg: '#0B0B0F', shape: 'square', font: '600 52px \'JetBrains Mono\',monospace' },
+    { bg: '#23232B', fg: '#C6F24E', shape: 'square', font: '400 60px \'Instrument Serif\',serif', italic: true },
+    { bg: '#C6F24E', fg: '#0B0B0F', shape: 'square', font: '600 44px \'JetBrains Mono\',monospace', lower: true },
+    { bg: '#0B0B0F', fg: '#E8E6E1', shape: 'circle', font: '650 56px Inter,sans-serif', border: true },
+    { bg: '#14141A', fg: '#C6F24E', shape: 'circle', font: '400 62px \'Instrument Serif\',serif', border: true }
+  ];
+  let chosen = null;
+  VARIANTS.forEach((v, i) => {
+    const cv = document.createElement('canvas');
+    cv.width = 128; cv.height = 128;
+    const g = cv.getContext('2d');
+    g.fillStyle = v.bg;
+    if (v.shape === 'circle') { g.beginPath(); g.arc(64, 64, 62, 0, Math.PI * 2); g.fill(); }
+    else { g.beginPath(); g.roundRect && g.roundRect(2, 2, 124, 124, 26); g.fill ? g.fill() : g.stroke(); if (!g.roundRect) { g.fillRect(2, 2, 124, 124); } }
+    if (v.border) { g.strokeStyle = '#23232B'; g.lineWidth = 3; if (v.shape === 'circle') { g.beginPath(); g.arc(64, 64, 60, 0, Math.PI * 2); g.stroke(); } else { g.strokeRect(3, 3, 122, 122); } }
+    g.fillStyle = v.fg;
+    g.font = (v.italic ? 'italic ' : '') + v.font;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    const t = text().slice(0, 2);
+    g.fillText(v.lower ? t.toLowerCase() : t, 64, 68);
+    cv.onclick = () => {
+      grid.querySelectorAll('canvas').forEach((c) => c.classList.remove('sel'));
+      cv.classList.add('sel');
+      chosen = cv.toDataURL('image/png');
+      document.getElementById('logoSave').disabled = false;
+    };
+    grid.appendChild(cv);
+  });
+  document.getElementById('logoText').oninput = () => { grid.innerHTML = ''; chosen = null; document.getElementById('logoSave').disabled = true; showLogo(); };
+  document.getElementById('logoSave').onclick = async () => {
+    if (!chosen) return;
+    try { await api('/api/admin/site-logo', { method: 'POST', body: { logo: chosen } }); toast('Logo live on the site'); }
+    catch (e) { toast(e.message); }
+  };
+  document.getElementById('logoUrlSave').onclick = async () => {
+    const u2 = document.getElementById('logoUrl').value.trim();
+    if (!u2) return toast('Paste an image URL first.');
+    try { await api('/api/admin/site-logo', { method: 'POST', body: { logo: u2 } }); toast('Logo updated'); showLogo(); }
+    catch (e) { toast(e.message); }
+  };
+  document.getElementById('logoClear').onclick = async () => {
+    try { await api('/api/admin/site-logo', { method: 'POST', body: { logo: '' } }); toast('Logo removed — back to the lime dot'); showLogo(); }
+    catch (e) { toast(e.message); }
   };
 }
 

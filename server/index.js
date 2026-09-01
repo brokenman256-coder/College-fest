@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { db, uid, now, SECTIONS, connectDB } = require('./db');
+const { db, uid, now, SECTIONS, connectDB, getSetting, setSetting } = require('./db');
 const blogBot = require('./blogBot');
 const campaignBot = require('./campaignBot');
 const chatBot = require('./chatBot');
@@ -296,6 +296,7 @@ async function handleApi(req, res, url) {
       chat_handle: u ? await chatBot.getChatHandle(u._id) : null,
       campaigns: (await db.collection('campaigns').find({ on: true }).sort({ created_at: -1 }).limit(3)
         .project({ title: 1, body: 1, cta: 1, cta_link: 1 }).toArray()),
+      site_logo: await getSetting('site_logo', ''),
       identity: u && u.role === 'admin' ? 'admin' : u ? 'student' : null
     });
   }
@@ -339,6 +340,7 @@ async function handleApi(req, res, url) {
         if (!(await db.collection('users').findOne({ handle: cand }))) { handle = cand; break; }
       }
       if (!handle) handle = 'anon_' + crypto.randomBytes(4).toString('hex');
+      const adminEmail = email && (await db.collection('admin_allowlist').findOne({ email }));
       await db.collection('users').insertOne({
         _id: uid('usr'),
         email: email || null,
@@ -348,7 +350,7 @@ async function handleApi(req, res, url) {
         state,
         place,
         handle,
-        role: 'student',
+        role: adminEmail ? 'admin' : 'student',
         status: 'active',
         verified: false,
         follower_count: 0,
@@ -1132,6 +1134,56 @@ async function handleApi(req, res, url) {
       console.error('campaign bot run error:', e);
       return send(res, 500, { error: 'Bot run failed.' });
     }
+  }
+
+  if (method === 'GET' && pathname === '/api/admin/allowlist') {
+    const list = await db.collection('admin_allowlist').find({}).sort({ created_at: -1 }).toArray();
+    return send(res, 200, { list });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/allowlist') {
+    const body = await readBody(req);
+    const email = String(body.email || '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter a valid email.' });
+    if (email === String(ADMIN.email).toLowerCase()) return send(res, 400, { error: 'That is already the main admin.' });
+    await db.collection('admin_allowlist').updateOne(
+      { email },
+      { $setOnInsert: { _id: uid('adm'), email, added_by: u.handle, created_at: now() } },
+      { upsert: true }
+    );
+    // if that person already has an account, promote them right away
+    const existing = await db.collection('users').findOne({ email });
+    if (existing && existing.role !== 'admin') await db.collection('users').updateOne({ _id: existing._id }, { $set: { role: 'admin', status: 'active' } });
+    await audit(u._id, 'allowlist_add', email, email);
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/allowlist-remove') {
+    const body = await readBody(req);
+    const email = String(body.email || '').trim().toLowerCase();
+    await db.collection('admin_allowlist').deleteOne({ email });
+    // do not demote the primary admin
+    if (email !== String(ADMIN.email).toLowerCase()) {
+      const target = await db.collection('users').findOne({ email, role: 'admin' });
+      if (target) {
+        await db.collection('users').updateOne({ _id: target._id }, { $set: { role: 'student' } });
+        await db.collection('sessions').deleteMany({ user_id: target._id });
+      }
+    }
+    await audit(u._id, 'allowlist_remove', email, email);
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/site-logo') {
+    const body = await readBody(req);
+    const logo = String(body.logo || '').trim();
+    if (logo && !/^(data:image\/(png|jpe?g|webp|svg\+xml);base64,|https?:\/\/)/.test(logo)) {
+      return send(res, 400, { error: 'Logo must be an image URL or a generated image.' });
+    }
+    if (logo.length > 300000) return send(res, 413, { error: 'Logo too large.' });
+    await setSetting('site_logo', logo);
+    await audit(u._id, 'set_site_logo', logo.slice(0, 40), 'logo updated');
+    return send(res, 200, { ok: true });
   }
 
   return send(res, 404, { error: 'Unknown API route.' });
