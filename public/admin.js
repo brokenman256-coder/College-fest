@@ -31,7 +31,7 @@ async function boot() {
   who.textContent = ME && ME.role === 'admin' ? ME.email : 'desk locked';
   nav.innerHTML = '';
   if (!ME || ME.role !== 'admin') return showLogin();
-  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','Chats'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['blog','Blog bot'],['audit','Audit']];
+  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['blog','Blog bot'],['audit','Audit']];
   const hash = (location.hash || '#overview').slice(1);
   for (const [id, label] of tabs) {
     const b = document.createElement('button');
@@ -48,6 +48,7 @@ async function boot() {
   if (page === 'users') return showUsers();
   if (page === 'posts') return showPosts();
   if (page === 'chat') return showChatMonitor();
+  if (page === 'room') return showRoom();
   if (page === 'payouts') return showPayouts();
   if (page === 'reports') return showReports();
   if (page === 'events') return showEvents();
@@ -79,15 +80,93 @@ function showLogin() {
 async function showOverview() {
   const d = await api('/api/admin/overview');
   const s = d.stats;
+  app.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><b>${s.users}</b>students<span class="delta">+${s.signups_week} this week</span></div>
+      <div class="stat"><b>${s.posts}</b>posts<span class="delta">+${s.posts_week} this week</span></div>
+      <div class="stat"><b>${s.total_reads}</b>unique reads</div>
+      <div class="stat"><b>${s.chats}</b>DMs</div>
+      <div class="stat"><b>${s.room_messages}</b>town hall msgs</div>
+      <div class="stat"><b>${s.pending_payouts}</b>payouts waiting<span class="delta">$${Number(s.pending_usd || 0).toFixed(2)}</span></div>
+      <div class="stat"><b>${s.suspended}</b>suspended</div>
+      <div class="stat"><b>${s.banned}</b>banned</div>
+      <div class="stat"><b>${s.reports}</b>open reports</div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3>Top stories</h3>
+        ${(d.top_posts || []).map((p) => `<div class="mini-row">
+          <span class="section-label">${esc(p.section || '')}</span>
+          <b>${esc(p.title)}</b>
+          <span class="meta">@${esc(p.handle || 'desk')} · ${p.unique_views} reads · ♥ ${p.likes || 0}</span>
+        </div>`).join('') || '<p class="meta">No posts yet.</p>'}
+      </div>
+      <div class="card">
+        <h3>Newest students</h3>
+        ${(d.recent_users || []).map((u) => `<div class="mini-row">
+          <b>@${esc(u.handle)}</b> ${u.status !== 'active' ? `<span class="tag">${esc(u.status)}</span>` : ''}
+          <span class="meta">${esc(u.college_name || '—')}${u.place ? ' · ' + esc(u.place) : ''} · ${esc((u.created_at || '').slice(0, 10))}</span>
+        </div>`).join('') || '<p class="meta">No students yet.</p>'}
+      </div>
+    </div>
+    <div class="warn">Identities stay on this desk. Share a record with authorities only through a lawful request — export is the audit log plus user rows, not a fake-view dump.</div>`;
+}
+
+async function showRoom() {
   app.innerHTML = `<div class="card">
-    <div class="stat"><b>${s.users}</b>students</div>
-    <div class="stat"><b>${s.suspended}</b>suspended</div>
-    <div class="stat"><b>${s.banned}</b>banned</div>
-    <div class="stat"><b>${s.posts}</b>posts</div>
-    <div class="stat"><b>${s.reports}</b>reports</div>
-    <div class="stat"><b>${s.pending_payouts}</b>payouts waiting</div>
-    <div class="warn">Identities stay on this desk. Share a record with authorities only through a lawful request — export is the audit log plus user rows, not a fake-view dump.</div>
+    <h3>Town hall — public room monitor</h3>
+    <p class="meta">Every message in the public room, with the real account behind the handle. Delete anything abusive or ban the sender.</p>
+    <div class="card" style="background:#f8fafc;margin-bottom:14px">
+      <label>Post to the room as @${esc((ME && ME.handle) || 'desk')}</label>
+      <input id="roomMsg" placeholder="Announcement to everyone in the town hall…" maxlength="1000">
+      <button class="btn solid" id="roomPost">Post announcement</button>
+    </div>
+    <div id="roomTbl"></div>
   </div>`;
+  const render = async () => {
+    try {
+      const d = await api('/api/admin/room');
+      document.getElementById('roomTbl').innerHTML = `<table>
+        <tr><th>When</th><th>Handle</th><th>Identity</th><th>Message</th><th></th></tr>
+        ${d.messages.map((m) => `<tr>
+          <td class="meta">${esc((m.timestamp || '').slice(0, 16).replace('T', ' '))}</td>
+          <td><b>@${esc(m.sender_handle)}</b></td>
+          <td class="meta">${esc(m.sender_email || '—')} · ${esc(m.sender_status || '?')}</td>
+          <td>${m.image_url ? `<img class="msg-img" src="${esc(m.image_url)}" alt="photo">` : ''}${esc(m.message || '')}</td>
+          <td>
+            <button class="btn danger" data-del="${esc(m._id)}">Delete</button>
+            <button class="btn danger" data-ban="${esc(m.sender_user_id || '')}">Ban sender</button>
+          </td>
+        </tr>`).join('') || '<tr><td colspan="5" class="meta">Room is quiet.</td></tr>'}
+      </table>`;
+      document.getElementById('roomTbl').onclick = async (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        try {
+          if (b.dataset.del) {
+            if (!confirm('Delete this room message?')) return;
+            await api('/api/admin/chat/delete', { method: 'POST', body: { room_id: b.dataset.del } });
+          } else if (b.dataset.ban) {
+            if (!confirm('Ban this sender?')) return;
+            await api('/api/admin/chat/ban-user', { method: 'POST', body: { user_id: b.dataset.ban } });
+          }
+          toast('Done'); render();
+        } catch (err) { toast(err.message); }
+      };
+    } catch (e) {
+      document.getElementById('roomTbl').innerHTML = '<p class="meta">' + esc(e.message) + '</p>';
+    }
+  };
+  document.getElementById('roomPost').onclick = async () => {
+    const inp = document.getElementById('roomMsg');
+    const v = inp.value.trim();
+    if (!v) return toast('Write something first.');
+    try {
+      await api('/api/room/send', { method: 'POST', body: { message: v } });
+      inp.value = '';
+      toast('Posted to town hall');
+    } catch (e) { toast(e.message); }
+  };
+  render();
 }
 
 async function showUsers() {

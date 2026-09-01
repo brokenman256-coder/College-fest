@@ -1,13 +1,15 @@
 const app = document.getElementById('app');
 const nav = document.getElementById('nav');
 const who = document.getElementById('who');
+const authRoot = document.getElementById('auth');
+const shell = document.getElementById('shell');
 let META = { sections: [], me: null, payout: {}, chat_handle: null };
 let chatPoll = null;
 
 function toast(t) {
   const el = document.getElementById('toast');
   el.textContent = t; el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2400);
+  setTimeout(() => el.classList.remove('show'), 2600);
 }
 async function api(path, opts) {
   const r = await fetch(path, {
@@ -25,22 +27,128 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function tagFor(p) {
-  if (p.source === 'prompt') return '<span class="tag prompt">staff prompt</span>';
-  if (p.source === 'bot') return '<span class="tag prompt">desk research</span>';
-  if (p.source === 'reddit') return '<span class="tag reddit">sourced</span>';
-  return '<span class="tag">' + p.section + '</span>';
+  if (p.source === 'prompt') return '<span class="section-label prompt">staff prompt</span>';
+  if (p.source === 'bot') return '<span class="section-label prompt">desk research</span>';
+  if (p.source === 'reddit') return '<span class="section-label reddit">sourced</span>';
+  return '<span class="section-label">' + esc(p.section) + '</span>';
 }
 function stopChatPoll() {
   if (chatPoll) { clearInterval(chatPoll); chatPoll = null; }
 }
+function readingTime(body) {
+  const mins = Math.max(1, Math.round(String(body || '').split(/\s+/).length / 200));
+  return mins + ' min read';
+}
+function initials(handle) {
+  return String(handle || '?').replace(/^@?/, '').slice(0, 1).toUpperCase();
+}
 
+/* ================= AUTH GATE (signup first) ================= */
+function renderAuth(mode) {
+  mode = mode || 'signup';
+  shell.classList.add('hidden');
+  authRoot.classList.remove('hidden');
+  authRoot.innerHTML = `
+  <div class="auth-wrap">
+    <div class="auth-hero">
+      <a class="brand" href="#" onclick="return false">College Fest</a>
+      <h1>The campus magazine <em>written by students</em> who live it.</h1>
+      <p>Honest reviews, confessions and campus news under an anonymous handle. Real readers earn you real money.</p>
+      <ul class="auth-points">
+        <li>Anonymous handle — your email and phone stay private</li>
+        <li>Unique real reads, not fake views</li>
+        <li>Public town hall + private anonymous chat</li>
+        <li>$100 minimum payout, paid in USDT / USDC</li>
+      </ul>
+    </div>
+    <div class="auth-card">
+      ${mode === 'signup' ? `
+      <h2>Create your account</h2>
+      <p class="auth-switch">Already have one? <button class="auth-switch-btn" id="swLogin">Log in</button></p>
+      <label>College email <span class="req">*</span></label>
+      <input id="email" placeholder="you@college.ac.in">
+      <label>College name <span class="req">*</span></label>
+      <input id="college_name" placeholder="e.g. IIT Bombay">
+      <label>State <span class="req">*</span></label>
+      <input id="state" placeholder="e.g. Maharashtra">
+      <label>City / place <span class="req">*</span></label>
+      <input id="place" placeholder="e.g. Mumbai">
+      <label>Phone (optional, for OTP by SMS)</label>
+      <input id="phone" placeholder="10-digit">
+      <div class="fine">Fields marked <span class="req">*</span> are required. Students only see your handle — never your email, phone or college.</div>
+      <button class="btn accent" id="otp" style="width:100%;margin-top:10px">Send verification code</button>
+      <div id="otpBox" class="hidden" style="margin-top:12px">
+        <label>6-digit code</label>
+        <input id="code" inputmode="numeric" maxlength="6" placeholder="······">
+        <button class="btn solid" id="go" style="width:100%">Verify &amp; sign up</button>
+      </div>
+      <div class="fine" style="margin-top:12px">One account per student. The desk verifies IDs.</div>
+      ` : `
+      <h2>Welcome back</h2>
+      <p class="auth-switch">New here? <button class="auth-switch-btn" id="swSignup">Create an account</button></p>
+      <label>College email</label>
+      <input id="email" placeholder="you@college.ac.in">
+      <div class="fine">We send a one-time code to this email.</div>
+      <button class="btn accent" id="otp" style="width:100%;margin-top:10px">Send code</button>
+      <div id="otpBox" class="hidden" style="margin-top:12px">
+        <label>6-digit code</label>
+        <input id="code" inputmode="numeric" maxlength="6" placeholder="······">
+        <button class="btn solid" id="go" style="width:100%">Verify &amp; log in</button>
+      </div>
+      <div class="fine" style="margin-top:12px">Lost access? Request the code again.</div>
+      `}
+    </div>
+  </div>`;
+  const req = authRoot.querySelectorAll('.req');
+  req.forEach((el) => { el.style.color = 'var(--accent)'; el.style.fontWeight = '700'; });
+
+  if (mode === 'signup') {
+    document.getElementById('swLogin').onclick = () => renderAuth('login');
+  } else {
+    document.getElementById('swSignup').onclick = () => renderAuth('signup');
+  }
+  document.getElementById('otp').onclick = sendOtp;
+  document.getElementById('go').onclick = verifyOtp;
+
+  function signupBody() {
+    return {
+      email: document.getElementById('email').value,
+      phone: (document.getElementById('phone') || {}).value || '',
+      college_name: (document.getElementById('college_name') || {}).value || '',
+      state: (document.getElementById('state') || {}).value || '',
+      place: (document.getElementById('place') || {}).value || ''
+    };
+  }
+  async function sendOtp() {
+    try {
+      const r = await api('/api/auth/request-otp', { method: 'POST', body: signupBody() });
+      document.getElementById('otpBox').classList.remove('hidden');
+      document.getElementById('otpBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      toast(r.dev_otp ? 'Demo code: ' + r.dev_otp : 'Code sent — check your email');
+      if (r.dev_otp) document.getElementById('code').value = r.dev_otp;
+    } catch (e) { toast(e.message); }
+  }
+  async function verifyOtp() {
+    try {
+      await api('/api/auth/verify-otp', { method: 'POST', body: { ...signupBody(), code: document.getElementById('code').value } });
+      toast('Welcome in!');
+      boot();
+    } catch (e) { toast(e.message); }
+  }
+}
+
+/* ================= MAIN APP ================= */
 async function boot() {
   META = await api('/api/meta');
-  who.textContent = META.me ? ('@' + META.me.handle + (META.me.status !== 'active' ? ' · ' + META.me.status : '')) : 'not signed in';
+  if (!META.me) return renderAuth();
+  if (META.me.role === 'admin') { location.replace('/admin'); return; } // desk opens itself for the admin ID
+  authRoot.classList.add('hidden');
+  shell.classList.remove('hidden');
+  who.innerHTML = '<b>@' + esc(META.me.handle) + '</b>' + (META.me.status !== 'active' ? ' · ' + esc(META.me.status) : '');
   nav.innerHTML = '';
   const tabs = [
-    ['feed', 'Feed'], ['write', 'Write'], ['chat', 'Chat'], ['search', 'Search'], ['events', 'Events'],
-    ['sourced', 'Sourced'], ['me', META.me ? 'You' : 'Login']
+    ['feed', 'Stories'], ['write', 'Write'], ['chat', 'Chat'], ['search', 'Search'], ['events', 'Events'],
+    ['sourced', 'Sourced'], ['earn', 'Earn'], ['me', 'You']
   ];
   const page = pageName();
   for (const [id, label] of tabs) {
@@ -68,7 +176,7 @@ async function updateChatBadge() {
 }
 function paintBadge(n) {
   const b = document.getElementById('tab-chat');
-  if (b) b.textContent = 'Chat' + (n ? ' ●' + n : '');
+  if (b) b.innerHTML = 'Chat' + (n ? ' <span class="badge-dot">' + n + '</span>' : '');
 }
 
 function pageName() {
@@ -78,6 +186,7 @@ function pageName() {
 
 function route() {
   stopChatPoll();
+  if (!META.me) return renderAuth();
   const hsh = (location.hash || '#feed').slice(1);
   if (hsh.startsWith('post/')) return showPost(hsh.slice(5));
   const page = pageName();
@@ -86,6 +195,7 @@ function route() {
   if (page === 'events') return showEvents();
   if (page === 'sourced') return showSourced();
   if (page === 'me') return showMe();
+  if (page === 'earn') return showEarn();
   if (page === 'chat') return showChat();
   showFeed();
 }
@@ -93,36 +203,49 @@ function route() {
 async function showFeed() {
   const section = new URLSearchParams((location.hash.split('?')[1] || '')).get('section') || 'all';
   const data = await api('/api/feed' + (section !== 'all' ? '?section=' + encodeURIComponent(section) : ''));
-  app.innerHTML = `<div class="row" id="sec"></div><div id="list"></div>`;
+  app.innerHTML = `<div class="row" id="sec" style="margin:14px 0 6px"></div><div id="list"></div>`;
   const sec = document.getElementById('sec');
   [{ id: 'all', name: 'All' }, ...META.sections].forEach((s) => {
     const b = document.createElement('button');
-    b.className = 'btn' + (s.id === section ? ' solid' : '');
+    b.className = 'btn mini' + (s.id === section ? ' solid' : '');
     b.textContent = s.name;
     b.onclick = () => { location.hash = 'feed?section=' + s.id; };
     sec.appendChild(b);
   });
   document.getElementById('list').innerHTML = data.posts.map((p) => `
-    <article class="card glow">
+    <article class="card post-card">
       ${tagFor(p)}
-      <h3><a href="#post/${esc(p.id)}">${esc(p.title)}</a></h3>
-      <div class="meta">@${esc(p.handle)} · ${p.unique_views} unique reads · ♥ ${p.likes || 0} · ${p.created_at.slice(0,10)}</div>
-      <p>${esc(p.body.slice(0, 240))}${p.body.length > 240 ? '…' : ''}</p>
-    </article>`).join('') || '<p class="meta">No posts in this section yet.</p>';
+      <h2><a href="#post/${esc(p.id)}">${esc(p.title)}</a></h2>
+      <div class="byline">
+        <span class="avatar">${esc(initials(p.handle))}</span>
+        <b>@${esc(p.handle)}</b><span class="dot">·</span>
+        <span>${p.created_at.slice(0, 10)}</span><span class="dot">·</span>
+        <span>${readingTime(p.body)}</span><span class="dot">·</span>
+        <span>${p.unique_views} reads</span><span class="dot">·</span>
+        <span>♥ ${p.likes || 0}</span>
+      </div>
+      <p class="excerpt">${esc(p.body.slice(0, 220))}${p.body.length > 220 ? '…' : ''}</p>
+    </article>`).join('') || '<p class="meta" style="padding:30px 0">No stories in this section yet. Be the first to <a href="#write">write one</a>.</p>';
 }
 
 async function showPost(id) {
   const { post: p } = await api('/api/posts/' + id);
-  app.innerHTML = `<article class="card">
+  app.innerHTML = `<article class="card post-full">
     ${tagFor(p)}
-    <h3>${esc(p.title)}</h3>
-    <div class="meta">@${esc(p.handle)} · ${p.unique_views} unique reads · ${p.created_at}</div>
-    <p style="white-space:pre-wrap">${esc(p.body)}</p>
+    <h1>${esc(p.title)}</h1>
+    <div class="byline" style="margin:10px 0 4px">
+      <span class="avatar">${esc(initials(p.handle))}</span>
+      <b>@${esc(p.handle)}</b><span class="dot">·</span>
+      <span>${esc(p.created_at)}</span><span class="dot">·</span>
+      <span>${p.unique_views} unique reads</span><span class="dot">·</span>
+      <span>${readingTime(p.body)}</span>
+    </div>
+    <div class="body">${esc(p.body)}</div>
     ${p.source_url ? `<p class="meta">Source: <a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.source_url)}</a></p>` : ''}
-    <div class="row">
-      <button class="btn ${p.liked_by_me ? 'solid' : ''}" id="like">${p.liked_by_me ? '♥' : '♡'} ${p.likes || 0}</button>
+    <div class="post-actions">
+      <button class="btn ${p.liked_by_me ? 'accent' : ''}" id="like">${p.liked_by_me ? '♥' : '♡'} ${p.likes || 0}</button>
       <button class="btn" id="fol">Follow @${esc(p.handle)}</button>
-      <button class="btn danger" id="rep">Report</button>
+      <button class="btn mini" id="rep">Report</button>
       <span style="flex:1"></span>
       <button class="btn mini" id="shW">WhatsApp</button>
       <button class="btn mini" id="shX">X</button>
@@ -130,13 +253,13 @@ async function showPost(id) {
     </div>
   </article>`;
   const shareUrl = location.origin + location.pathname + '#post/' + p.id;
-  const shareText = encodeURIComponent(p.title + ' — College Fest board');
+  const shareText = encodeURIComponent(p.title + ' — College Fest');
   document.getElementById('like').onclick = async () => {
     try {
       const r = await api('/api/posts/' + p.id + '/like', { method: 'POST', body: {} });
       const b = document.getElementById('like');
       b.textContent = (r.liked ? '♥' : '♡') + ' ' + r.likes;
-      b.classList.toggle('solid', r.liked);
+      b.classList.toggle('accent', r.liked);
       toast(r.liked ? 'Liked ♥' : 'Like removed');
     } catch (e) { toast(e.message); }
   };
@@ -159,20 +282,19 @@ async function showPost(id) {
 }
 
 function showWrite() {
-  if (!META.me) { location.hash = 'me'; return; }
   if (META.me.status === 'suspended') {
     app.innerHTML = '<div class="warn">Your account is suspended. You can read, not post.</div>';
     return;
   }
-  app.innerHTML = `<div class="card">
-    <h3>Write</h3>
-    <p class="meta">Other students see your handle, not your email or phone. The desk can still see who you are.</p>
+  app.innerHTML = `<div class="card" style="max-width:720px;margin:26px auto">
+    <h3 style="font-size:26px">Write a story</h3>
+    <p class="meta">Readers see your handle only — never your email, phone or college. The desk can still moderate.</p>
     <label>Section</label>
     <select id="section">${META.sections.map((s) => `<option value="${s.id}">${s.name}</option>`).join('')}</select>
-    <label>Title</label><input id="title" maxlength="140">
-    <label>What happened / what you learned</label>
-    <textarea id="body" rows="8" placeholder="Stick to what you saw. Do not invent. Do not name people just to pile on."></textarea>
-    <button class="btn solid" id="pub">Publish</button>
+    <label>Title</label><input id="title" maxlength="140" placeholder="Give it a real headline">
+    <label>Story</label>
+    <textarea id="body" rows="10" placeholder="Stick to what you saw. Do not invent. Do not name people just to pile on."></textarea>
+    <button class="btn accent" id="pub">Publish story</button>
   </div>`;
   document.getElementById('pub').onclick = async () => {
     try {
@@ -187,27 +309,33 @@ function showWrite() {
   };
 }
 
-/* ---------------- anonymous chat ---------------- */
+/* ---------------- chat: town hall (public) + DMs ---------------- */
 function showChat() {
-  if (!META.me) { location.hash = 'me'; return; }
   app.innerHTML = `<div class="chat-layout">
-    <div class="chat-side card">
-      <h3>Your chat handle</h3>
-      <div class="row">
-        <code class="handle-chip" id="myHandle">${esc(META.chat_handle || '—')}</code>
-        <button class="btn mini" id="copyHandle">copy</button>
+    <div class="chat-side">
+      <div class="card room-card" id="roomCard">
+        <h3>Town hall <span class="meta">public room</span></h3>
+        <p class="meta">Everyone on campus in one room. Handles only — the desk moderates.</p>
       </div>
-      <p class="meta">Share this handle to receive anonymous messages. It reveals nothing about you.</p>
-      <h3>Start a chat</h3>
-      <input id="newChat" placeholder="ch_xxxxxxxxxx">
-      <button class="btn solid" id="startChat">Open</button>
-      <h3>Chats</h3>
-      <div id="contacts"><p class="meta">Loading…</p></div>
+      <div class="card">
+        <h3>Your chat handle</h3>
+        <div class="row">
+          <code class="handle-chip" id="myHandle">${esc(META.chat_handle || '—')}</code>
+          <button class="btn mini" id="copyHandle">copy</button>
+        </div>
+        <p class="meta">Share this handle to receive anonymous messages. It reveals nothing about you.</p>
+        <h3 style="font-size:16px">Start a direct chat</h3>
+        <input id="newChat" placeholder="ch_xxxxxxxxxx">
+        <button class="btn accent" id="startChat">Open chat</button>
+      </div>
+      <div class="card">
+        <h3>Direct chats</h3>
+        <div id="contacts"><p class="meta">Loading…</p></div>
+      </div>
     </div>
-    <div class="chat-main card" id="chatMain">
-      <p class="meta">Pick a chat on the left, or open one with a handle.</p>
-    </div>
+    <div class="chat-main card" id="chatMain"><p class="meta">Loading…</p></div>
   </div>`;
+  document.getElementById('roomCard').onclick = openRoom;
   document.getElementById('copyHandle').onclick = () => {
     navigator.clipboard && navigator.clipboard.writeText(META.chat_handle || '');
     toast('Chat handle copied');
@@ -218,6 +346,83 @@ function showChat() {
     openConversation(v);
   };
   renderContacts();
+  openRoom();
+}
+
+function chatComposer(inputId, filePrefix, onPush) {
+  const fileInput = document.getElementById(filePrefix + 'File');
+  document.getElementById(filePrefix + 'Attach').onclick = () => fileInput.click();
+  fileInput.onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (!window.openImageEditor) return toast('Editor missing');
+    openImageEditor(f, async (dataUrl) => {
+      toast('Uploading photo…');
+      try {
+        const r = await api('/api/chat/upload-image', { method: 'POST', body: { image_data: dataUrl } });
+        await onPush({ message: document.getElementById(inputId).value.trim(), image_url: r.url });
+        document.getElementById(inputId).value = '';
+        toast('Photo sent');
+      } catch (err) { toast(err.message); }
+    });
+  };
+  document.getElementById(filePrefix + 'Send').onclick = () => {
+    const inp = document.getElementById(inputId);
+    const v = inp.value.trim();
+    if (!v) return;
+    inp.value = '';
+    onPush({ message: v });
+  };
+  document.getElementById(inputId).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById(filePrefix + 'Send').onclick();
+  });
+}
+
+async function openRoom() {
+  stopChatPoll();
+  const main = document.getElementById('chatMain');
+  if (!main) return;
+  main.innerHTML = `
+    <div class="chat-head"><span class="neon-title">Town hall</span><span class="meta">public room · be decent · desk can remove messages</span></div>
+    <div class="chat-msgs" id="roomMsgs"><p class="meta">Loading…</p></div>
+    <div class="chat-input">
+      <input type="file" id="roomFile" accept="image/*" class="hidden">
+      <button class="btn mini" id="roomAttach">📷</button>
+      <input id="roomText" placeholder="Say something to the whole campus…" maxlength="1000">
+      <button class="btn accent mini" id="roomSend">Send</button>
+    </div>`;
+  let lastCount = -1;
+
+  async function load() {
+    try {
+      const d = await api('/api/room/history');
+      if (!document.getElementById('roomMsgs')) return;
+      if (d.messages.length === lastCount) return;
+      lastCount = d.messages.length;
+      document.getElementById('roomMsgs').innerHTML = d.messages.map((m) => `
+        <div class="bubble ${m.sender_handle === d.me ? 'me' : 'them'}">
+          ${m.sender_handle !== d.me ? `<div class="room-who">@${esc(m.sender_handle)}</div>` : ''}
+          ${m.image_url ? `<img class="msg-img" src="${esc(m.image_url)}" alt="photo">` : ''}
+          ${m.message ? `<p>${esc(m.message)}</p>` : ''}
+          <span class="meta">${esc((m.timestamp || '').slice(0, 16).replace('T', ' '))}</span>
+        </div>`).join('') || '<p class="meta">No messages yet. Start the conversation.</p>';
+      const box = document.getElementById('roomMsgs');
+      box.scrollTop = box.scrollHeight;
+    } catch (e) {
+      const b = document.getElementById('roomMsgs');
+      if (b) b.innerHTML = '<p class="meta">' + esc(e.message) + '</p>';
+    }
+  }
+  await load();
+  chatPoll = setInterval(load, 4000);
+
+  chatComposer('roomText', 'room', async (body) => {
+    try {
+      await api('/api/room/send', { method: 'POST', body });
+      lastCount = -1;
+      await load();
+    } catch (e) { toast(e.message); }
+  });
 }
 
 async function renderContacts() {
@@ -243,13 +448,13 @@ async function openConversation(handle) {
   const main = document.getElementById('chatMain');
   if (!main) return;
   main.innerHTML = `
-    <div class="chat-head"><span class="neon-title">@${esc(handle)}</span><span class="meta">anonymous · end-to-end visible only to the desk</span></div>
+    <div class="chat-head"><span class="neon-title">@${esc(handle)}</span><span class="meta">anonymous · visible to the desk for safety</span></div>
     <div class="chat-msgs" id="msgs"><p class="meta">Loading…</p></div>
     <div class="chat-input">
       <input type="file" id="chatFile" accept="image/*" class="hidden">
       <button class="btn mini" id="attach">📷</button>
       <input id="chatText" placeholder="Type a message…" maxlength="2000">
-      <button class="btn solid mini" id="sendMsg">Send</button>
+      <button class="btn accent mini" id="sendMsg">Send</button>
     </div>`;
   let lastCount = -1;
 
@@ -304,17 +509,16 @@ async function openConversation(handle) {
         const r = await api('/api/chat/upload-image', { method: 'POST', body: { image_data: dataUrl } });
         await push({ message: document.getElementById('chatText').value.trim(), image_url: r.url });
         document.getElementById('chatText').value = '';
-        toast('Photo sent ✦');
+        toast('Photo sent');
       } catch (err) { toast(err.message); }
     });
   };
 }
 
-/* ---------------- rest ---------------- */
+/* ---------------- search / events / sourced ---------------- */
 function showSearch() {
-  app.innerHTML = `<div class="card">
-    <h3>Search people and posts</h3>
-    <p class="meta">Students search by handle. The desk can also search email, phone, and college ID.</p>
+  app.innerHTML = `<div class="card" style="max-width:640px;margin:26px auto">
+    <h3>Search people and stories</h3>
     <input id="q" placeholder="handle or words">
     <div id="out"></div>
   </div>`;
@@ -323,105 +527,118 @@ function showSearch() {
     const d = await api('/api/search?q=' + encodeURIComponent(q));
     document.getElementById('out').innerHTML =
       '<h3>People</h3>' + (d.people.map((p) => `<div class="card">@${esc(p.handle)} · ${p.follower_count} followers ${p.verified ? '· verified' : ''}</div>`).join('') || '<p class="meta">None</p>') +
-      '<h3>Posts</h3>' + (d.posts.map((p) => `<div class="card"><a href="#post/${esc(p.id)}">${esc(p.title)}</a></div>`).join('') || '<p class="meta">None</p>');
+      '<h3>Stories</h3>' + (d.posts.map((p) => `<div class="card"><a href="#post/${esc(p.id)}">${esc(p.title)}</a></div>`).join('') || '<p class="meta">None</p>');
   };
   document.getElementById('q').oninput = debounce(run, 250);
 }
 
 async function showEvents() {
   const d = await api('/api/events');
-  app.innerHTML = `<div class="warn">Instagram reels are not scraped. Staff can paste a public event here. Connecting a Meta app later is optional and official-API only.</div>` +
+  app.innerHTML = `<div class="warn">Campus events are posted by staff. Connecting a Meta app later is optional and official-API only.</div>` +
     (d.events.map((e) => `<article class="card"><h3>${esc(e.title)}</h3><div class="meta">${esc(e.source || 'staff')} · ${e.created_at.slice(0,10)}</div><p>${esc(e.body)}</p></article>`).join('') || '<p class="meta">No events yet.</p>');
 }
 
 async function showSourced() {
   const d = await api('/api/sourced');
   app.innerHTML = `<div class="warn">${esc(d.disclaimer)}</div>` +
-    (d.items || []).map((i) => `<article class="card">
-      <span class="tag reddit">r/${esc(i.subreddit)}</span>
-      <h3><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a></h3>
-      <p>${esc(i.excerpt || '')}</p>
+    (d.items || []).map((i) => `<article class="card post-card">
+      <span class="section-label reddit">r/${esc(i.subreddit)}</span>
+      <h2><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.title)}</a></h2>
+      <p class="excerpt">${esc(i.excerpt || '')}</p>
       <div class="meta">${esc(i.labeled)}</div>
     </article>`).join('') || `<p class="meta">${esc(d.error || 'Nothing sourced right now.')}</p>`;
 }
 
-async function showMe() {
-  if (!META.me) {
-    app.innerHTML = `<div class="grid">
-      <div class="card">
-        <h3>Student login</h3>
-        <p class="meta">College email (.edu / .ac.in) or phone + OTP. Optional college ID. The code is emailed / texted to you (or shown here in demo mode).</p>
-        <label>College email</label><input id="email" placeholder="you@college.ac.in">
-        <label>Phone</label><input id="phone" placeholder="10-digit">
-        <label>College ID (optional)</label><input id="cid">
-        <button class="btn solid" id="otp">Send OTP</button>
-        <div id="otpBox" class="hidden">
-          <label>OTP</label><input id="code">
-          <button class="btn" id="go">Verify</button>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Desk login</h3>
-        <p class="meta">Admins use email + password, not OTP.</p>
-        <p><a href="/admin">Open admin desk →</a></p>
-      </div>
-    </div>`;
-    document.getElementById('otp').onclick = async () => {
-      try {
-        const r = await api('/api/auth/request-otp', { method: 'POST', body: {
-          email: document.getElementById('email').value,
-          phone: document.getElementById('phone').value,
-          college_id: document.getElementById('cid').value
-        }});
-        document.getElementById('otpBox').classList.remove('hidden');
-        toast(r.dev_otp ? ('Demo OTP: ' + r.dev_otp) : 'OTP sent');
-      } catch (e) { toast(e.message); }
-    };
-    document.getElementById('go').onclick = async () => {
-      try {
-        await api('/api/auth/verify-otp', { method: 'POST', body: {
-          email: document.getElementById('email').value,
-          phone: document.getElementById('phone').value,
-          code: document.getElementById('code').value
-        }});
-        location.hash = 'feed'; boot();
-      } catch (e) { toast(e.message); }
-    };
-    return;
-  }
+/* ---------------- earn (payout milestone) ---------------- */
+function milestoneRow(done, label, sub) {
+  return `<div class="milestone ${done ? 'done' : ''}">
+    <div class="tick">${done ? '✓' : '○'}</div>
+    <div><div class="m-label">${label}</div><div class="m-sub">${sub}</div></div>
+  </div>`;
+}
+
+async function showEarn() {
   const d = await api('/api/me');
   const p = d.payout;
-  app.innerHTML = `<div class="card">
-    <h3>@${esc(d.me.handle)}</h3>
-    <div class="meta">Status: ${d.me.status} · followers ${d.me.follower_count}</div>
-    <div class="row">
-      <code class="handle-chip">chat: ${esc(META.chat_handle || '—')}</code>
-      <button class="btn mini" id="copyChat">copy</button>
+  const pct = Math.min(100, Math.round((p.estimated_usd / p.min_payout_usd) * 100));
+  const allDone = p.estimated_usd >= p.min_payout_usd && p.followers >= p.min_followers && p.unique_views >= p.min_unique_views && !!p.wallet;
+  app.innerHTML = `<div style="max-width:640px;margin:26px auto">
+    <div class="balance-box">
+      <div class="usd">$${p.estimated_usd.toFixed(2)}</div>
+      <div class="cap">earned from ${p.unique_views} unique real reads · $${(p.usd_per_view || 0.002).toFixed(3)} per read</div>
+      <div class="progress"><i style="width:${Math.min(100, (p.estimated_usd / p.min_payout_usd) * 100)}%"></i></div>
+      <div class="cap">withdrawal unlocks at <b>$${p.min_payout_usd}</b> — $${Math.max(0, p.min_payout_usd - p.estimated_usd).toFixed(2)} to go</div>
     </div>
-    <p>Payouts use <b>unique real reads</b> only. Fake view bots are not in this product.</p>
-    <p>Need ${p.min_followers} followers and ${p.min_unique_views} unique reads across your posts. You have ${p.followers} / ${p.unique_views}. Estimate $${p.estimated_usd} USDT.</p>
-    <label>Crypto wallet</label><input id="wallet" value="${esc(p.wallet || '')}" placeholder="USDT / USDC address">
-    <div class="row">
-      <button class="btn" id="saveW">Save wallet</button>
-      <button class="btn solid" id="pay">Request payout</button>
-      <button class="btn danger" id="out">Log out</button>
+    <div class="milestones">
+      <div class="milestone ${p.followers >= p.min_followers ? 'done' : ''}">
+        <div class="tick">${p.followers >= p.min_followers ? '✓' : '○'}</div>
+        <div><div class="m-label">${p.followers} / ${p.min_followers} followers</div>
+        <div class="progress small"><i style="width:${Math.min(100, (p.followers / p.min_followers) * 100)}%"></i></div></div>
+      </div>
+      <div class="milestone ${p.unique_views >= p.min_unique_views ? 'done' : ''}">
+        <div class="tick">${p.unique_views >= p.min_unique_views ? '✓' : '○'}</div>
+        <div><div class="m-label">${p.unique_views} / ${p.min_unique_views} unique reads</div>
+        <div class="progress small"><i style="width:${Math.min(100, (p.unique_views / p.min_unique_views) * 100)}%"></i></div></div>
+      </div>
+      <div class="milestone ${p.estimated_usd >= p.min_payout_usd ? 'done' : ''}">
+        <div class="tick">${p.estimated_usd >= p.min_payout_usd ? '✓' : '○'}</div>
+        <div><div class="m-label">Earn $${p.min_payout_usd}+</div>
+        <div class="m-sub">minimum withdrawal is $${p.min_payout_usd}</div></div>
+      </div>
+      <div class="milestone ${p.wallet ? 'done' : ''}">
+        <div class="tick">${p.wallet ? '✓' : '○'}</div>
+        <div><div class="m-label">Wallet saved</div>
+        <div class="m-sub">${p.wallet ? esc(p.wallet.slice(0, 8)) + '…' : 'add your USDT / USDC address below'}</div></div>
+      </div>
     </div>
-    <h3>Your posts</h3>
-    ${d.posts.map((x) => `<div class="meta"><a href="#post/${esc(x.id)}">${esc(x.title)}</a> · ${x.unique_views} unique ${x.hidden ? '· hidden' : ''}</div>`).join('') || '<p class="meta">None yet.</p>'}
+    <div class="card">
+      <h3>Crypto wallet</h3>
+      <label>USDT / USDC address</label>
+      <input id="wallet" value="${esc(p.wallet || '')}" placeholder="0x… or T…">
+      <div class="row">
+        <button class="btn" id="saveW">Save wallet</button>
+        <button class="btn accent" id="pay" ${allDone ? '' : 'disabled'} title="${allDone ? '' : 'Complete all milestones first'}">Request payout</button>
+        ${allDone ? '' : '<span class="meta">Complete every milestone above to unlock payout.</span>'}
+      </div>
+      <p class="fine" style="margin-top:10px">Payouts count <b>unique real reads only</b>. Fake views never count — the desk reviews every request before it is paid.</p>
+    </div>
+  </div>`;
+  document.getElementById('saveW').onclick = async () => {
+    try { await api('/api/me/wallet', { method: 'POST', body: { wallet: document.getElementById('wallet').value } }); toast('Wallet saved'); showEarn(); }
+    catch (e) { toast(e.message); }
+  };
+  document.getElementById('pay').onclick = async () => {
+    try { const r = await api('/api/payouts/request', { method: 'POST', body: {} }); toast('Payout requested: $' + r.amount_usd); showEarn(); }
+    catch (e) { toast(e.message); }
+  };
+}
+
+/* ---------------- you ---------------- */
+async function showMe() {
+  const d = await api('/api/me');
+  app.innerHTML = `<div style="max-width:640px;margin:26px auto">
+    <div class="card">
+      <h3 style="font-size:26px">@${esc(d.me.handle)}</h3>
+      <div class="meta">Status: ${esc(d.me.status)} · followers ${d.me.follower_count}${d.me.college_name ? ' · ' + esc(d.me.college_name) + (d.me.place ? ', ' + esc(d.me.place) : '') + (d.me.state ? ', ' + esc(d.me.state) : '') : ''}</div>
+      <div class="row" style="margin-top:12px">
+        <code class="handle-chip">chat: ${esc(META.chat_handle || '—')}</code>
+        <button class="btn mini" id="copyChat">copy</button>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn" id="earnLink">Go to Earn →</button>
+      </div>
+      <h3 style="margin-top:18px">Your stories</h3>
+      ${d.posts.map((x) => `<div class="meta" style="padding:4px 0"><a href="#post/${esc(x.id)}">${esc(x.title)}</a> · ${x.unique_views} reads ${x.hidden ? '· hidden' : ''}</div>`).join('') || '<p class="meta">None yet — <a href="#write">write your first story</a>.</p>'}
+      <div class="row" style="margin-top:16px">
+        <button class="btn danger" id="out">Log out</button>
+      </div>
+    </div>
   </div>`;
   document.getElementById('copyChat').onclick = () => {
     navigator.clipboard && navigator.clipboard.writeText(META.chat_handle || '');
     toast('Chat handle copied');
   };
-  document.getElementById('saveW').onclick = async () => {
-    try { await api('/api/me/wallet', { method: 'POST', body: { wallet: document.getElementById('wallet').value } }); toast('Wallet saved'); }
-    catch (e) { toast(e.message); }
-  };
-  document.getElementById('pay').onclick = async () => {
-    try { const r = await api('/api/payouts/request', { method: 'POST', body: {} }); toast('Requested $' + r.amount_usd); }
-    catch (e) { toast(e.message); }
-  };
-  document.getElementById('out').onclick = async () => { await api('/api/auth/logout', { method: 'POST', body: {} }); location.hash = 'me'; boot(); };
+  document.getElementById('earnLink').onclick = () => { location.hash = 'earn'; };
+  document.getElementById('out').onclick = async () => { await api('/api/auth/logout', { method: 'POST', body: {} }); location.hash = ''; boot(); };
 }
 
 function debounce(fn, ms) {

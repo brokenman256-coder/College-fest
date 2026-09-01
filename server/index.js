@@ -16,6 +16,7 @@ const ALLOW_ANY_EMAIL = String(process.env.ALLOW_ANY_EMAIL || 'true') === 'true'
 const MIN_FOLLOWERS = 25;
 const MIN_UNIQUE_VIEWS = 200;
 const USD_PER_VIEW = 0.002;
+const MIN_PAYOUT_USD = 100; // withdrawal milestone — smaller requests are not paid out
 
 let ADMIN = null;
 
@@ -119,6 +120,9 @@ function publicUser(u) {
     status: u.status,
     verified: !!u.verified,
     follower_count: u.follower_count || 0,
+    college_name: u.college_name || null,
+    state: u.state || null,
+    place: u.place || null,
     created_at: u.created_at
   };
 }
@@ -166,12 +170,13 @@ async function uniqueViewsOf(userId) {
 async function payoutEligible(u) {
   const views = await uniqueViewsOf(u._id);
   return {
-    ok: u.status === 'active' && (u.follower_count || 0) >= MIN_FOLLOWERS && views >= MIN_UNIQUE_VIEWS && !!u.wallet,
+    ok: u.status === 'active' && (u.follower_count || 0) >= MIN_FOLLOWERS && views >= MIN_UNIQUE_VIEWS && Math.round(views * USD_PER_VIEW * 100) / 100 >= MIN_PAYOUT_USD && !!u.wallet,
     followers: u.follower_count || 0,
     min_followers: MIN_FOLLOWERS,
     unique_views: views,
     min_unique_views: MIN_UNIQUE_VIEWS,
     estimated_usd: Math.round(views * USD_PER_VIEW * 100) / 100,
+    min_payout_usd: MIN_PAYOUT_USD,
     wallet: u.wallet || null
   };
 }
@@ -285,7 +290,7 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/meta') {
     return send(res, 200, {
       sections: SECTIONS,
-      payout: { min_followers: MIN_FOLLOWERS, min_unique_views: MIN_UNIQUE_VIEWS, usd_per_unique_view: USD_PER_VIEW },
+      payout: { min_followers: MIN_FOLLOWERS, min_unique_views: MIN_UNIQUE_VIEWS, usd_per_unique_view: USD_PER_VIEW, min_payout_usd: MIN_PAYOUT_USD },
       me: u ? (u.role === 'admin' ? adminUser(u) : publicUser(u)) : null,
       chat_handle: u ? await chatBot.getChatHandle(u._id) : null,
       identity: u && u.role === 'admin' ? 'admin' : u ? 'student' : null
@@ -297,6 +302,9 @@ async function handleApi(req, res, url) {
     const email = String(body.email || '').trim().toLowerCase();
     const phone = String(body.phone || '').replace(/\D/g, '');
     const college_id = String(body.college_id || '').trim();
+    const college_name = String(body.college_name || '').trim();
+    const state = String(body.state || '').trim();
+    const place = String(body.place || '').trim();
     const identifier = email || phone;
     if (!identifier) return send(res, 400, { error: 'Use a college email or a phone number.' });
     if (email && !isCampusEmail(email)) return send(res, 400, { error: 'Use a college email (.edu / .ac.in / .edu.in).' });
@@ -306,6 +314,12 @@ async function handleApi(req, res, url) {
       ? await db.collection('users').findOne({ email })
       : await db.collection('users').findOne({ phone });
     if (existing && existing.status === 'banned') return send(res, 403, { error: 'This account is banned.' });
+    // college name / state / place are mandatory for NEW signups only
+    if (!existing) {
+      if (!college_name) return send(res, 400, { error: 'College name is required.' });
+      if (!state) return send(res, 400, { error: 'State is required.' });
+      if (!place) return send(res, 400, { error: 'City / place is required.' });
+    }
     const code = String(crypto.randomInt(100000, 999999));
     await db.collection('otps').updateOne(
       { identifier },
@@ -319,6 +333,9 @@ async function handleApi(req, res, url) {
         email: email || null,
         phone: phone || null,
         college_id: college_id || null,
+        college_name,
+        state,
+        place,
         handle,
         role: 'student',
         status: 'active',
@@ -327,8 +344,13 @@ async function handleApi(req, res, url) {
         wallet: null,
         created_at: now()
       });
-    } else if (college_id && !existing.college_id) {
-      await db.collection('users').updateOne({ _id: existing._id }, { $set: { college_id } });
+    } else {
+      const patch = {};
+      if (college_id && !existing.college_id) patch.college_id = college_id;
+      if (college_name && !existing.college_name) patch.college_name = college_name;
+      if (state && !existing.state) patch.state = state;
+      if (place && !existing.place) patch.place = place;
+      if (Object.keys(patch).length) await db.collection('users').updateOne({ _id: existing._id }, { $set: patch });
     }
     const masked = email ? email.replace(/(^.).*(@.*$)/, '$1***$2') : 'phone ***' + phone.slice(-4);
     const payload = { ok: true, sent_to: masked };
@@ -404,6 +426,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/feed') {
+    if (!u) return send(res, 401, { error: 'Sign up to read the board.' });
     const section = url.searchParams.get('section');
     const q = url.searchParams.get('q');
     const match = { hidden: { $ne: true } };
@@ -430,6 +453,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname.startsWith('/api/posts/')) {
+    if (!u) return send(res, 401, { error: 'Sign up to read the board.' });
     const id = pathname.split('/')[3];
     const p = await db.collection('posts').findOne({ _id: id });
     if (!p || (p.hidden && (!u || u.role !== 'admin'))) return send(res, 404, { error: 'Not found.' });
@@ -534,6 +558,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/search') {
+    if (!u) return send(res, 401, { error: 'Login first.' });
     const q = String(url.searchParams.get('q') || '').trim();
     if (q.length < 2) return send(res, 200, { people: [], posts: [] });
     const people = await db.collection('users').find(
@@ -591,6 +616,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/sourced') {
+    if (!u) return send(res, 401, { error: 'Sign up to read the board.' });
     try {
       const items = await fetchRedditSourced();
       return send(res, 200, { items, disclaimer: 'Attributed public posts from Reddit. Not campus confessions. Not rewritten as student stories.' });
@@ -600,6 +626,7 @@ async function handleApi(req, res, url) {
   }
 
   if (method === 'GET' && pathname === '/api/events') {
+    if (!u) return send(res, 401, { error: 'Sign up to read the board.' });
     const rows = await db.collection('events').find({}).sort({ created_at: -1 }).limit(40).toArray();
     return send(res, 200, { events: rows.map((e) => ({ id: e._id, ...e, _id: undefined })) });
   }
@@ -685,6 +712,48 @@ async function handleApi(req, res, url) {
     }
   }
 
+  /* ---------- public room (town hall) ---------- */
+  if (method === 'GET' && pathname === '/api/room/history') {
+    if (!u) return send(res, 401, { error: 'Login first.' });
+    try {
+      const messages = await db.collection('room_messages')
+        .find({ room: 'townhall' })
+        .sort({ timestamp: -1 })
+        .limit(120)
+        .toArray();
+      return send(res, 200, { me: u.handle, messages: messages.reverse() });
+    } catch (e) {
+      console.error('room history error:', e);
+      return send(res, 500, { error: 'Failed to load room.' });
+    }
+  }
+
+  if (method === 'POST' && pathname === '/api/room/send') {
+    if (!u) return send(res, 401, { error: 'Login first.' });
+    if (u.status === 'banned') return send(res, 403, { error: 'Banned.' });
+    if (u.status === 'suspended') return send(res, 403, { error: 'Account suspended. You can read, not chat.' });
+    const body = await readBody(req);
+    const message = String(body.message || '').trim().slice(0, 1000);
+    const imageUrl = typeof body.image_url === 'string' && /^https?:/.test(body.image_url) ? body.image_url : null;
+    if (!message && !imageUrl) return send(res, 400, { error: 'Write something first.' });
+    if (!rateLimit('room:' + u._id, 12, 60 * 1000)) return send(res, 429, { error: 'Slow down — too many messages.' });
+    try {
+      await db.collection('room_messages').insertOne({
+        _id: uid('msg'),
+        room: 'townhall',
+        sender_user_id: u._id,
+        sender_handle: u.handle,
+        message: message || null,
+        image_url: imageUrl,
+        timestamp: now()
+      });
+      return send(res, 200, { ok: true });
+    } catch (e) {
+      console.error('room send error:', e);
+      return send(res, 500, { error: 'Failed to send.' });
+    }
+  }
+
   /* ---------- admin ---------- */
   function needAdmin() {
     if (!u || u.role !== 'admin') {
@@ -697,16 +766,37 @@ async function handleApi(req, res, url) {
   if (pathname.startsWith('/api/admin/') && !needAdmin()) return;
 
   if (method === 'GET' && pathname === '/api/admin/overview') {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const [users, banned, suspended, posts, postsWeek, signupsWeek, reports, chats, roomMsgs, pendingPayouts, pendingAgg, readsAgg] = await Promise.all([
+      db.collection('users').countDocuments({ role: 'student' }),
+      db.collection('users').countDocuments({ status: 'banned' }),
+      db.collection('users').countDocuments({ status: 'suspended' }),
+      db.collection('posts').countDocuments({}),
+      db.collection('posts').countDocuments({ created_at: { $gte: weekAgo } }),
+      db.collection('users').countDocuments({ role: 'student', created_at: { $gte: weekAgo } }),
+      db.collection('reports').countDocuments({}),
+      db.collection('chats').countDocuments({}),
+      db.collection('room_messages').countDocuments({}),
+      db.collection('payouts').countDocuments({ status: 'pending' }),
+      db.collection('payouts').aggregate([{ $match: { status: 'pending' } }, { $group: { _id: null, sum: { $sum: '$amount_usd' } } }]).toArray(),
+      db.collection('posts').aggregate([{ $group: { _id: null, sum: { $sum: '$unique_views' } } }]).toArray()
+    ]);
     const stats = {
-      users: await db.collection('users').countDocuments({ role: 'student' }),
-      banned: await db.collection('users').countDocuments({ status: 'banned' }),
-      suspended: await db.collection('users').countDocuments({ status: 'suspended' }),
-      posts: await db.collection('posts').countDocuments({}),
-      reports: await db.collection('reports').countDocuments({}),
-      chats: await db.collection('chats').countDocuments({}),
-      pending_payouts: await db.collection('payouts').countDocuments({ status: 'pending' })
+      users, banned, suspended, posts, reports, chats,
+      posts_week: postsWeek,
+      signups_week: signupsWeek,
+      room_messages: roomMsgs,
+      pending_payouts: pendingPayouts,
+      pending_usd: (pendingAgg[0] && pendingAgg[0].sum) || 0,
+      total_reads: (readsAgg[0] && readsAgg[0].sum) || 0
     };
-    return send(res, 200, { stats });
+    const [top_posts, recent_users] = await Promise.all([
+      db.collection('posts').find({ hidden: { $ne: true } }).sort({ unique_views: -1 }).limit(5)
+        .project({ title: 1, handle: 1, section: 1, unique_views: 1, likes: 1 }).toArray(),
+      db.collection('users').find({ role: 'student' }).sort({ created_at: -1 }).limit(6)
+        .project({ handle: 1, college_name: 1, place: 1, status: 1, created_at: 1 }).toArray()
+    ]);
+    return send(res, 200, { stats, top_posts, recent_users });
   }
 
   if (method === 'GET' && pathname === '/api/admin/users') {
@@ -914,6 +1004,12 @@ async function handleApi(req, res, url) {
   if (method === 'POST' && pathname === '/api/admin/chat/delete') {
     const body = await readBody(req);
     const chatId = String(body.chat_id || '');
+    const roomId = String(body.room_id || '');
+    if (roomId) {
+      await db.collection('room_messages').deleteOne({ _id: roomId });
+      await audit(u._id, 'delete_room_msg', roomId, 'admin deletion');
+      return send(res, 200, { ok: true });
+    }
     await db.collection('chats').deleteOne({ chat_id: chatId });
     await audit(u._id, 'delete_chat', chatId, 'admin deletion');
     return send(res, 200, { ok: true });
@@ -937,6 +1033,20 @@ async function handleApi(req, res, url) {
     await db.collection('sessions').deleteMany({ user_id: target._id });
     await audit(u._id, 'ban_user_chat', target._id, target.handle);
     return send(res, 200, { ok: true, banned: target.handle });
+  }
+
+  if (method === 'GET' && pathname === '/api/admin/room') {
+    const messages = await db.collection('room_messages').aggregate([
+      { $sort: { timestamp: -1 } },
+      { $limit: 150 },
+      { $lookup: { from: 'users', localField: 'sender_user_id', foreignField: '_id', as: 'sender' } },
+      { $addFields: {
+        sender_email: { $arrayElemAt: ['$sender.email', 0] },
+        sender_status: { $arrayElemAt: ['$sender.status', 0] }
+      } },
+      { $project: { sender: 0 } }
+    ]).toArray();
+    return send(res, 200, { messages });
   }
 
   return send(res, 404, { error: 'Unknown API route.' });
