@@ -330,7 +330,15 @@ async function handleApi(req, res, url) {
       { upsert: true }
     );
     if (!existing) {
-      const handle = 'anon_' + crypto.randomBytes(3).toString('hex');
+      // stable pseudonym: adjective.noun.number — nothing links it to the real account
+      const ADJ = ['silent', 'midnight', 'quiet', 'lone', 'hidden', 'wandering', 'shadow', 'echo', 'amber', 'cosmic', 'velvet', 'iron', 'paper', 'monsoon', 'northern'];
+      const NOUN = ['owl', 'river', 'fox', 'pine', 'comet', 'raven', 'peak', 'lantern', 'wolf', 'sparrow', 'ember', 'cloud', 'heron', 'willow', 'quill'];
+      let handle = '';
+      for (let t = 0; t < 6; t++) {
+        const cand = ADJ[Math.floor(Math.random() * ADJ.length)] + '.' + NOUN[Math.floor(Math.random() * NOUN.length)] + '.' + Math.floor(10 + Math.random() * 90);
+        if (!(await db.collection('users').findOne({ handle: cand }))) { handle = cand; break; }
+      }
+      if (!handle) handle = 'anon_' + crypto.randomBytes(4).toString('hex');
       await db.collection('users').insertOne({
         _id: uid('usr'),
         email: email || null,

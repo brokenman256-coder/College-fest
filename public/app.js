@@ -35,6 +35,29 @@ function tagFor(p) {
 function stopChatPoll() {
   if (chatPoll) { clearInterval(chatPoll); chatPoll = null; }
 }
+
+/* ---- privacy shield: blur chats when window loses focus, tab-switch, or PrintScreen ---- */
+let chatViewOpen = false;
+function shield(on, why) {
+  if (on) { document.body.classList.add('shield'); if (why) toast(why); }
+  else document.body.classList.remove('shield');
+}
+function shieldTick() { shield(chatViewOpen && document.hidden); }
+window.addEventListener('blur', () => { if (chatViewOpen) shield(true); });
+window.addEventListener('focus', () => { if (chatViewOpen && !document.hidden) setTimeout(() => shield(false), 200); });
+document.addEventListener('visibilitychange', () => {
+  if (chatViewOpen) shield(document.hidden, document.hidden ? 'Chat hidden — privacy shield' : '');
+});
+window.addEventListener('keyup', (e) => {
+  if (chatViewOpen && e.key === 'PrintScreen') {
+    shield(true, 'Screenshot blocked — privacy shield');
+    try { navigator.clipboard.writeText(' '); } catch (err) {}
+    setTimeout(() => shield(false), 1600);
+  }
+});
+document.addEventListener('contextmenu', (e) => {
+  if (e.target && e.target.closest && e.target.closest('.chat-main')) e.preventDefault();
+});
 function readingTime(body) {
   const mins = Math.max(1, Math.round(String(body || '').split(/\s+/).length / 200));
   return mins + ' min read';
@@ -195,6 +218,7 @@ function route() {
   stopChatPoll();
   if (!META.me) return renderAuth();
   const hsh = (location.hash || '#feed').slice(1);
+  chatViewOpen = pageName() === 'chat';
   if (hsh.startsWith('post/')) return showPost(hsh.slice(5));
   const page = pageName();
   if (page === 'write') return showWrite();
@@ -236,8 +260,8 @@ async function showFeed() {
         <b>@${esc(p.handle)}</b><span class="dot">·</span>
         <span>${p.created_at.slice(0, 10)}</span><span class="dot">·</span>
         <span>${readingTime(p.body)}</span><span class="dot">·</span>
-        <span>${p.unique_views} reads</span><span class="dot">·</span>
-        <span>♥ ${p.likes || 0}</span>
+        <span class="mono">${p.unique_views} reads</span><span class="dot">·</span>
+        <span class="mono">♥ ${p.likes || 0}</span>
       </div>
       <p class="excerpt">${esc(p.body.slice(0, 220))}${p.body.length > 220 ? '…' : ''}</p>
     </article>`).join('') || '<p class="meta" style="padding:30px 0">No stories in this section yet. Be the first to <a href="#write">write one</a>.</p>';
@@ -251,14 +275,14 @@ async function showPost(id) {
     <div class="byline" style="margin:10px 0 4px">
       <span class="avatar">${esc(initials(p.handle))}</span>
       <b>@${esc(p.handle)}</b><span class="dot">·</span>
-      <span>${esc(p.created_at)}</span><span class="dot">·</span>
-      <span>${p.unique_views} unique reads</span><span class="dot">·</span>
+      <span class="mono">${esc(p.created_at)}</span><span class="dot">·</span>
+      <span class="mono">${p.unique_views} unique reads</span><span class="dot">·</span>
       <span>${readingTime(p.body)}</span>
     </div>
     <div class="body">${esc(p.body)}</div>
     ${p.source_url ? `<p class="meta">Source: <a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.source_url)}</a></p>` : ''}
     <div class="post-actions">
-      <button class="btn ${p.liked_by_me ? 'accent' : ''}" id="like">${p.liked_by_me ? '♥' : '♡'} ${p.likes || 0}</button>
+      <button class="btn ${p.liked_by_me ? 'accent liked' : ''}" id="like">${p.liked_by_me ? '♥' : '♡'} ${p.likes || 0}</button>
       <button class="btn" id="fol">Follow @${esc(p.handle)}</button>
       <button class="btn mini" id="rep">Report</button>
       <span style="flex:1"></span>
@@ -275,6 +299,7 @@ async function showPost(id) {
       const b = document.getElementById('like');
       b.textContent = (r.liked ? '♥' : '♡') + ' ' + r.likes;
       b.classList.toggle('accent', r.liked);
+      b.classList.toggle('liked', r.liked);
       toast(r.liked ? 'Liked ♥' : 'Like removed');
     } catch (e) { toast(e.message); }
   };
