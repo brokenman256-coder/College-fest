@@ -52,13 +52,13 @@ function renderAuth(mode) {
   <div class="auth-wrap">
     <div class="auth-hero">
       <a class="brand" href="#" onclick="return false">College Fest</a>
-      <h1>The campus magazine <em>written by students</em> who live it.</h1>
-      <p>Honest reviews, confessions and campus news under an anonymous handle. Real readers earn you real money.</p>
+      <h1>The <em>front page</em> of your campus.</h1>
+      <p>Anonymous handles. Real stories. Every unique read pays real money — cash out in crypto.</p>
       <ul class="auth-points">
-        <li>Anonymous handle — your email and phone stay private</li>
-        <li>Unique real reads, not fake views</li>
-        <li>Public town hall + private anonymous chat</li>
-        <li>$100 minimum payout, paid in USDT / USDC</li>
+        <li>Post with a handle — email and phone stay private</li>
+        <li>Every unique read earns you money</li>
+        <li>$100 payout in USDT / USDC, no middlemen</li>
+        <li>Town hall + anonymous DMs</li>
       </ul>
     </div>
     <div class="auth-card">
@@ -203,7 +203,15 @@ function route() {
 async function showFeed() {
   const section = new URLSearchParams((location.hash.split('?')[1] || '')).get('section') || 'all';
   const data = await api('/api/feed' + (section !== 'all' ? '?section=' + encodeURIComponent(section) : ''));
-  app.innerHTML = `<div class="row" id="sec" style="margin:14px 0 6px"></div><div id="list"></div>`;
+  const promo = (META.campaigns || [])[0];
+  app.innerHTML = `
+    ${promo ? `<div class="promo"><div><b>${esc(promo.title)}</b><span>${esc(promo.body)}</span></div><button class="promo-cta" id="promoCta">${esc(promo.cta || 'Start writing')}</button></div>` : ''}
+    <div class="row" id="sec" style="margin:14px 0 6px"></div><div id="list"></div>`;
+  if (promo) {
+    document.getElementById('promoCta').onclick = () => {
+      location.hash = promo.cta_link === 'earn' ? 'earn' : promo.cta_link === 'feed' ? 'feed' : 'write';
+    };
+  }
   const sec = document.getElementById('sec');
   [{ id: 'all', name: 'All' }, ...META.sections].forEach((s) => {
     const b = document.createElement('button');

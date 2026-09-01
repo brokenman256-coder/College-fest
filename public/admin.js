@@ -31,7 +31,7 @@ async function boot() {
   who.textContent = ME && ME.role === 'admin' ? ME.email : 'desk locked';
   nav.innerHTML = '';
   if (!ME || ME.role !== 'admin') return showLogin();
-  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['blog','Blog bot'],['audit','Audit']];
+  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['promos','Promo bot'],['blog','Blog bot'],['audit','Audit']];
   const hash = (location.hash || '#overview').slice(1);
   for (const [id, label] of tabs) {
     const b = document.createElement('button');
@@ -53,6 +53,7 @@ async function boot() {
   if (page === 'reports') return showReports();
   if (page === 'events') return showEvents();
   if (page === 'prompts') return showPrompts();
+  if (page === 'promos') return showPromos();
   if (page === 'blog') return showBlogBot();
   if (page === 'audit') return showAudit();
   showOverview();
@@ -376,6 +377,81 @@ function showPrompts() {
       }});
       toast('Prompt on the feed');
     } catch (e) { toast(e.message); }
+  };
+}
+
+async function showPromos() {
+  const [bot, list] = await Promise.all([api('/api/admin/campaign-bot'), api('/api/admin/campaigns')]);
+  app.innerHTML = `
+    <div class="card">
+      <h3>📣 Campaign bot</h3>
+      <p class="meta">${esc(bot.note)}</p>
+      <p>Status: <b>${bot.on ? 'running' : 'paused'}</b> · every ${bot.interval_hours}h · ${bot.runs} runs · last ${esc(bot.last || 'never')}</p>
+      <div class="row">
+        <button class="btn solid" id="botRun">Run one now</button>
+        <button class="btn" id="botTog">${bot.on ? 'Pause bot' : 'Resume bot'}</button>
+      </div>
+      ${bot.log && bot.log.length ? `<h3 style="margin-top:14px">Recent runs</h3>${bot.log.map((l) => `
+        <div class="mini-row"><b>${esc(l.title)}</b><span class="meta">${esc(l.reason)} · ${esc((l.created_at || '').slice(0, 16).replace('T', ' '))}</span></div>`).join('')}` : ''}
+    </div>
+    <div class="card">
+      <h3>Manual campaign</h3>
+      <p class="meta">Goes live as a banner instantly and is announced in the town hall as the desk.</p>
+      <label>Title</label><input id="cmpTitle" maxlength="120" placeholder="💸 Payout week is live">
+      <label>Body</label><input id="cmpBody" maxlength="300" placeholder="What bloggers should do and what they get">
+      <div class="grid">
+        <div><label>Button text</label><input id="cmpCta" maxlength="40" value="Start writing"></div>
+        <div><label>Button goes to</label><select id="cmpLink">
+          <option value="write">Write page</option><option value="earn">Earn page</option><option value="feed">Feed</option>
+        </select></div>
+      </div>
+      <button class="btn solid" id="cmpAdd">Launch campaign</button>
+    </div>
+    <div class="card">
+      <h3>All campaigns</h3>
+      <table>
+        <tr><th>Campaign</th><th>Source</th><th>State</th><th></th></tr>
+        ${list.campaigns.map((c) => `<tr>
+          <td><b>${esc(c.title)}</b><div class="meta">${esc(c.body)}</div></td>
+          <td class="meta">${c.source === 'bot' ? '🤖 bot' : '✍️ manual'}</td>
+          <td>${c.on ? 'live' : 'off'}</td>
+          <td>
+            <button class="btn" data-tog="${esc(c._id)}">${c.on ? 'Turn off' : 'Turn on'}</button>
+            <button class="btn danger" data-del="${esc(c._id)}">Delete</button>
+          </td>
+        </tr>`).join('') || '<tr><td colspan="4" class="meta">No campaigns yet.</td></tr>'}
+      </table>
+    </div>`;
+  document.getElementById('botRun').onclick = async () => {
+    try { const r = await api('/api/admin/campaign-bot/run', { method: 'POST', body: {} }); toast('Bot launched: ' + r.title); showPromos(); }
+    catch (e) { toast(e.message); }
+  };
+  document.getElementById('botTog').onclick = async () => {
+    try { await api('/api/admin/campaign-bot', { method: 'POST', body: { on: !bot.on } }); toast(bot.on ? 'Bot paused' : 'Bot resumed'); showPromos(); }
+    catch (e) { toast(e.message); }
+  };
+  document.getElementById('cmpAdd').onclick = async () => {
+    try {
+      await api('/api/admin/campaign', { method: 'POST', body: {
+        title: document.getElementById('cmpTitle').value,
+        body: document.getElementById('cmpBody').value,
+        cta: document.getElementById('cmpCta').value,
+        cta_link: document.getElementById('cmpLink').value
+      }});
+      toast('Campaign live + announced in town hall');
+      showPromos();
+    } catch (e) { toast(e.message); }
+  };
+  app.onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    try {
+      if (b.dataset.tog) await api('/api/admin/campaign-toggle', { method: 'POST', body: { id: b.dataset.tog } });
+      else if (b.dataset.del) {
+        if (!confirm('Delete this campaign?')) return;
+        await api('/api/admin/campaign-delete', { method: 'POST', body: { id: b.dataset.del } });
+      } else return;
+      toast('Done'); showPromos();
+    } catch (err) { toast(err.message); }
   };
 }
 

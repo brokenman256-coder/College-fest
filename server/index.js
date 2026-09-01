@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { db, uid, now, SECTIONS, connectDB } = require('./db');
 const blogBot = require('./blogBot');
+const campaignBot = require('./campaignBot');
 const chatBot = require('./chatBot');
 const mailer = require('./mailer');
 const sms = require('./sms');
@@ -293,6 +294,8 @@ async function handleApi(req, res, url) {
       payout: { min_followers: MIN_FOLLOWERS, min_unique_views: MIN_UNIQUE_VIEWS, usd_per_unique_view: USD_PER_VIEW, min_payout_usd: MIN_PAYOUT_USD },
       me: u ? (u.role === 'admin' ? adminUser(u) : publicUser(u)) : null,
       chat_handle: u ? await chatBot.getChatHandle(u._id) : null,
+      campaigns: (await db.collection('campaigns').find({ on: true }).sort({ created_at: -1 }).limit(3)
+        .project({ title: 1, body: 1, cta: 1, cta_link: 1 }).toArray()),
       identity: u && u.role === 'admin' ? 'admin' : u ? 'student' : null
     });
   }
@@ -1049,6 +1052,71 @@ async function handleApi(req, res, url) {
     return send(res, 200, { messages });
   }
 
+  if (method === 'GET' && pathname === '/api/admin/campaigns') {
+    const campaigns = await db.collection('campaigns').find({}).sort({ created_at: -1 }).toArray();
+    return send(res, 200, { campaigns });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/campaign') {
+    const body = await readBody(req);
+    const title = String(body.title || '').trim().slice(0, 120);
+    const text = String(body.body || '').trim().slice(0, 300);
+    const cta = String(body.cta || 'Start writing').trim().slice(0, 40);
+    const ctaLink = ['write', 'earn', 'feed'].includes(body.cta_link) ? body.cta_link : 'write';
+    if (!title || !text) return send(res, 400, { error: 'Title and body are required.' });
+    const doc = { _id: uid('cmp'), title, body: text, cta, cta_link: ctaLink, on: true, created_at: now() };
+    await db.collection('campaigns').insertOne(doc);
+    // broadcast the campaign into the town hall as the desk
+    await db.collection('room_messages').insertOne({
+      _id: uid('msg'),
+      room: 'townhall',
+      sender_user_id: u._id,
+      sender_handle: u.handle,
+      message: '📣 ' + title + ' — ' + text,
+      image_url: null,
+      timestamp: now()
+    });
+    await audit(u._id, 'create_campaign', doc._id, title);
+    return send(res, 200, { ok: true, id: doc._id });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/campaign-toggle') {
+    const body = await readBody(req);
+    const id = String(body.id || '');
+    const c = await db.collection('campaigns').findOne({ _id: id });
+    if (!c) return send(res, 404, { error: 'Campaign not found.' });
+    await db.collection('campaigns').updateOne({ _id: id }, { $set: { on: !c.on } });
+    await audit(u._id, 'toggle_campaign', id, String(!c.on));
+    return send(res, 200, { ok: true, on: !c.on });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/campaign-delete') {
+    const body = await readBody(req);
+    await db.collection('campaigns').deleteOne({ _id: String(body.id || '') });
+    await audit(u._id, 'delete_campaign', String(body.id || ''), 'campaign deleted');
+    return send(res, 200, { ok: true });
+  }
+
+  if (method === 'GET' && pathname === '/api/admin/campaign-bot') {
+    return send(res, 200, await campaignBot.status());
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/campaign-bot') {
+    const body = await readBody(req);
+    return send(res, 200, await campaignBot.setOn(!!body.on));
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/campaign-bot/run') {
+    try {
+      const r = await campaignBot.runOne('manual');
+      await audit(u._id, 'campaign_bot_run', r.id, r.title);
+      return send(res, 200, { ok: true, ...r });
+    } catch (e) {
+      console.error('campaign bot run error:', e);
+      return send(res, 500, { error: 'Bot run failed.' });
+    }
+  }
+
   return send(res, 404, { error: 'Unknown API route.' });
 }
 
@@ -1064,15 +1132,27 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+async function ensureCampaigns() {
+  const n = await db.collection('campaigns').countDocuments({});
+  if (n > 0) return;
+  await db.collection('campaigns').insertMany([
+    { _id: uid('cmp'), title: 'Writers get paid here 💸', body: 'Every unique read on your story earns you real money — cash out at $100 in USDT / USDC.', cta: 'Start writing', cta_link: 'write', on: true, created_at: now() },
+    { _id: uid('cmp'), title: 'Payout milestones are live', body: 'Grow 25 followers + 200 unique reads and your payout unlocks. No middlemen.', cta: 'Open Earn page', cta_link: 'earn', on: true, created_at: now() }
+  ]);
+}
+
 async function main() {
   await connectDB();
   ADMIN = await ensureAdmin();
+  await ensureCampaigns();
   server.listen(PORT, () => {
     console.log('College Fest board on http://localhost:' + PORT);
     console.log('Student site  http://localhost:' + PORT + '/');
     console.log('Admin desk    http://localhost:' + PORT + '/admin');
     console.log('Admin email   ' + ADMIN.email);
     blogBot.start();
+    campaignBot.start();
+    console.log('Campaign bot on, every ' + (Number(process.env.CAMPAIGN_BOT_INTERVAL_MS || 6 * 60 * 60 * 1000) / 36e5) + 'h');
   });
 }
 
