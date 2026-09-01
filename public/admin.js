@@ -31,7 +31,7 @@ async function boot() {
   who.textContent = ME && ME.role === 'admin' ? ME.email : 'desk locked';
   nav.innerHTML = '';
   if (!ME || ME.role !== 'admin') return showLogin();
-  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['audit','Audit']];
+  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','Chats'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['blog','Blog bot'],['audit','Audit']];
   const hash = (location.hash || '#overview').slice(1);
   for (const [id, label] of tabs) {
     const b = document.createElement('button');
@@ -47,10 +47,12 @@ async function boot() {
   const page = hash || 'overview';
   if (page === 'users') return showUsers();
   if (page === 'posts') return showPosts();
+  if (page === 'chat') return showChatMonitor();
   if (page === 'payouts') return showPayouts();
   if (page === 'reports') return showReports();
   if (page === 'events') return showEvents();
   if (page === 'prompts') return showPrompts();
+  if (page === 'blog') return showBlogBot();
   if (page === 'audit') return showAudit();
   showOverview();
 }
@@ -58,8 +60,8 @@ async function boot() {
 function showLogin() {
   app.innerHTML = `<div class="card" style="max-width:420px">
     <h3>Desk login</h3>
-    <label>Email</label><input id="email" value="admin@campus.local">
-    <label>Password</label><input id="pw" type="password" value="change-me-now">
+    <label>Email</label><input id="email" value="brokenman256@gmail.com">
+    <label>Password</label><input id="pw" type="password" placeholder="admin password">
     <button class="btn solid" id="go">Enter</button>
     <p class="meta">Change ADMIN_PASSWORD in the environment before this is public.</p>
   </div>`;
@@ -140,6 +142,76 @@ async function showPosts() {
     await api('/api/admin/hide-post', { method: 'POST', body: { id: b.dataset.id, hidden: Number(b.dataset.h) } });
     boot();
   };
+}
+
+async function showChatMonitor(page = 1) {
+  app.innerHTML = `<div class="card">
+    <h3>Chat monitor</h3>
+    <p class="meta">Anonymous chat handles are pseudonyms. This desk can map them to accounts when there is a lawful reason.</p>
+    <div class="row">
+      <input id="cq" placeholder="filter by chat handle (ch_xxxxxxxxxx)" style="max-width:340px">
+      <button class="btn" id="csearch">Filter</button>
+      <button class="btn" id="call">All messages</button>
+    </div>
+    <div id="ctbl"></div>
+    <div class="row" id="cnav"></div>
+  </div>`;
+
+  const render = async (url) => {
+    try {
+      const d = await api(url);
+      const msgs = d.messages || [];
+      document.getElementById('ctbl').innerHTML = `<table>
+        <tr><th>When</th><th>From</th><th>To</th><th>Message</th><th>Actions</th></tr>
+        ${msgs.map((m) => `<tr>
+          <td class="meta">${esc((m.timestamp || '').slice(0, 16).replace('T', ' '))}</td>
+          <td><b>@${esc(m.sender_handle)}</b><div class="meta">${esc(m.sender_email || '—')} · ${esc(m.sender_status || '?')}</div></td>
+          <td>@${esc(m.receiver_handle)}</td>
+          <td>${m.image_url ? `<img class="msg-img" src="${esc(m.image_url)}" alt="photo">` : ''}${esc(m.message || '')}</td>
+          <td>
+            <button class="btn danger" data-del="${esc(m.chat_id)}">Delete</button>
+            <button class="btn danger" data-ban-user="${esc(m.sender_user_id || '')}" data-banh="${esc(m.sender_handle)}">Ban sender</button>
+          </td>
+        </tr>`).join('') || '<tr><td colspan="5" class="meta">Nothing here.</td></tr>'}
+      </table>`;
+      const navBox = document.getElementById('cnav');
+      if (d.pages > 1 && url.includes('chat/all')) {
+        navBox.innerHTML = `
+          <button class="btn" ${page <= 1 ? 'disabled' : ''} id="cprev">← Prev</button>
+          <span class="meta">page ${d.page} / ${d.pages} · ${d.total} messages</span>
+          <button class="btn" ${page >= d.pages ? 'disabled' : ''} id="cnext">Next →</button>`;
+        const prev = document.getElementById('cprev');
+        const next = document.getElementById('cnext');
+        if (prev) prev.onclick = () => showChatMonitor(page - 1);
+        if (next) next.onclick = () => showChatMonitor(page + 1);
+      } else navBox.innerHTML = '';
+      document.getElementById('ctbl').onclick = async (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        try {
+          if (b.dataset.del) {
+            if (!confirm('Delete this message?')) return;
+            await api('/api/admin/chat/delete', { method: 'POST', body: { chat_id: b.dataset.del } });
+          } else if (b.dataset.ban !== undefined && b.dataset.ban !== '') {
+            if (!confirm('Ban this sender?')) return;
+            await api('/api/admin/chat/ban-user', { method: 'POST', body: { user_id: b.dataset.ban } });
+          }
+          toast('Done'); render(url);
+        } catch (err) { toast(err.message); }
+      };
+    } catch (e) {
+      document.getElementById('ctbl').innerHTML = '<p class="meta">' + esc(e.message) + '</p>';
+    }
+  };
+
+  document.getElementById('csearch').onclick = () => {
+    const q = document.getElementById('cq').value.trim();
+    if (!q) return toast('Type a chat handle.');
+    render('/api/admin/chat/user?handle=' + encodeURIComponent(q));
+  };
+  document.getElementById('cq').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('csearch').onclick(); });
+  document.getElementById('call').onclick = () => showChatMonitor(1);
+
+  render('/api/admin/chat/all?page=' + page + '&limit=50');
 }
 
 async function showPayouts() {
@@ -225,6 +297,28 @@ function showPrompts() {
       }});
       toast('Prompt on the feed');
     } catch (e) { toast(e.message); }
+  };
+}
+
+async function showBlogBot() {
+  const d = await api('/api/admin/blog-bot');
+  app.innerHTML = `<div class="card">
+    <h3>Desk blog bot</h3>
+    <p class="meta">${esc(d.note)}</p>
+    <p>Status: <b>${d.on ? 'on' : 'off'}</b> · every ${d.interval_hours} hours · ${d.posts} briefs published · last ${esc(d.last || 'never')}</p>
+    <div class="row">
+      <button class="btn solid" id="run">Write one now</button>
+      <button class="btn" id="tog">${d.on ? 'Pause bot' : 'Turn bot on'}</button>
+    </div>
+    <div class="warn">Each post cites UGC / Tele-MANAS (or similar) and lists Reddit threads with links. It will never post as an anonymous student or add fake views.</div>
+  </div>`;
+  document.getElementById('run').onclick = async () => {
+    try { const r = await api('/api/admin/blog-bot/run', { method: 'POST', body: {} }); toast('Published: ' + r.title); boot(); }
+    catch (e) { toast(e.message); }
+  };
+  document.getElementById('tog').onclick = async () => {
+    try { await api('/api/admin/blog-bot', { method: 'POST', body: { on: !d.on } }); boot(); }
+    catch (e) { toast(e.message); }
   };
 }
 

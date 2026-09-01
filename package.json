@@ -10,5 +10,11 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "cloudinary": "^2.11.0",
+    "dotenv": "^17.4.2",
+    "mongodb": "^7.6.0",
+    "sharp": "^0.35.4"
   }
 }
