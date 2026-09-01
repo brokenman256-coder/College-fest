@@ -78,6 +78,7 @@ function renderAuth(mode) {
       <div class="fine">Fields marked <span class="req">*</span> are required. Students only see your handle — never your email, phone or college.</div>
       <button class="btn accent" id="otp" style="width:100%;margin-top:10px">Send verification code</button>
       <div id="otpBox" class="hidden" style="margin-top:12px">
+        <div id="demoNote" class="warn hidden" style="margin:0 0 10px">SMS / email delivery is not connected yet — <b>demo mode</b>: your code is filled in below. Connect Twilio or Resend to send real codes.</div>
         <label>6-digit code</label>
         <input id="code" inputmode="numeric" maxlength="6" placeholder="······">
         <button class="btn solid" id="go" style="width:100%">Verify &amp; sign up</button>
@@ -91,6 +92,7 @@ function renderAuth(mode) {
       <div class="fine">We send a one-time code to this email.</div>
       <button class="btn accent" id="otp" style="width:100%;margin-top:10px">Send code</button>
       <div id="otpBox" class="hidden" style="margin-top:12px">
+        <div id="demoNote" class="warn hidden" style="margin:0 0 10px">SMS / email delivery is not connected yet — <b>demo mode</b>: your code is filled in below. Connect Twilio or Resend to send real codes.</div>
         <label>6-digit code</label>
         <input id="code" inputmode="numeric" maxlength="6" placeholder="······">
         <button class="btn solid" id="go" style="width:100%">Verify &amp; log in</button>
@@ -124,8 +126,13 @@ function renderAuth(mode) {
       const r = await api('/api/auth/request-otp', { method: 'POST', body: signupBody() });
       document.getElementById('otpBox').classList.remove('hidden');
       document.getElementById('otpBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      toast(r.dev_otp ? 'Demo code: ' + r.dev_otp : 'Code sent — check your email');
-      if (r.dev_otp) document.getElementById('code').value = r.dev_otp;
+      if (r.via === 'demo' && r.dev_otp) {
+        document.getElementById('demoNote').classList.remove('hidden');
+        toast('Demo code: ' + r.dev_otp);
+        document.getElementById('code').value = r.dev_otp;
+      } else {
+        toast(r.via === 'sms' ? 'Code sent — check your phone' : 'Code sent — check your email');
+      }
     } catch (e) { toast(e.message); }
   }
   async function verifyOtp() {

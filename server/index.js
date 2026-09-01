@@ -374,6 +374,15 @@ async function handleApi(req, res, url) {
       // SMS provider failed or missing → fall through to demo mode
     }
     if (ALLOW_ANY_EMAIL) payload.dev_otp = code;
+    // no delivery provider connected (Twilio / Resend)? never lock people out:
+    // fall back to demo mode and show the code on screen.
+    if (!payload.via) {
+      const providerMissing = (email && !mailer.isConfigured()) || (phone && !sms.isConfigured());
+      if (providerMissing) {
+        payload.dev_otp = code;
+        payload.via = 'demo';
+      }
+    }
     return send(res, 200, payload);
   }
 
