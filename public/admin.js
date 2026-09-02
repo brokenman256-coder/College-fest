@@ -208,7 +208,7 @@ async function showUsers() {
         <td class="mono">${u.wallet ? esc(u.wallet.slice(0, 10)) + '…' : '—'}</td>
         <td>
           <button class="btn" data-wallet="${u.id}" title="see wallet + per-blog earnings">💰 Wallet</button>
-          <button class="btn good" data-boost="${u.id}" title="add or decrease followers / reads / points / profile likes">⚡ Boost</button>
+          <button class="btn" data-adjust="${u.id}" data-handle="${esc(u.handle)}" title="adjust followers, reads, points, profile likes">✏️ Adjust</button>
           <button class="btn" data-act="active" data-id="${u.id}">Unsuspend</button>
           <button class="btn" data-act="suspended" data-id="${u.id}">Suspend</button>
           <button class="btn danger" data-act="banned" data-id="${u.id}">Ban</button>
@@ -220,17 +220,18 @@ async function showUsers() {
       const b = e.target.closest('button'); if (!b) return;
       try {
         if (b.dataset.wallet) return openWalletModal(b.dataset.wallet);
-        if (b.dataset.boost) {
-          const f = prompt('Followers — add (negative to decrease):', '100');
-          if (f === null) return;
-          const v = prompt('Unique reads to ADD — spread over their stories (negative to decrease):', '1000');
-          if (v === null) return;
-          const pt = prompt('Points to ADD (negative to decrease):', '50');
-          if (pt === null) return;
-          await api('/api/admin/user-boost', { method: 'POST', body: { id: b.dataset.boost, followers: Number(f), reads: Number(v), points: Number(pt) } });
-          toast('Metrics updated');
+        if (b.dataset.adjust) {
+          return openFormModal(`✏️ Adjust @${esc(b.dataset.handle)}`, [
+            { key: 'followers', label: 'Followers — add (negative to decrease)', value: 0 },
+            { key: 'reads', label: 'Unique reads to add — spread across their stories', value: 0 },
+            { key: 'points', label: 'Points to add', value: 0 },
+            { key: 'likes', label: 'Profile likes to add', value: 0 }
+          ], async (v) => {
+            await api('/api/admin/user-boost', { method: 'POST', body: { id: b.dataset.adjust, ...v } });
+            toast('Metrics updated'); render();
+          });
         }
-        else if (b.dataset.v) await api('/api/admin/verify', { method: 'POST', body: { id: b.dataset.v } });
+        if (b.dataset.v) await api('/api/admin/verify', { method: 'POST', body: { id: b.dataset.v } });
         else await api('/api/admin/user-status', { method: 'POST', body: { id: b.dataset.id, status: b.dataset.act } });
         toast('Updated'); render();
       } catch (err) { toast(err.message); }
@@ -242,20 +243,37 @@ async function showUsers() {
 
 async function showPosts() {
   const d = await api('/api/admin/posts');
-  app.innerHTML = `<table>
-    <tr><th>Title</th><th>Author</th><th>Email</th><th>Views</th><th></th></tr>
+  app.innerHTML = `<div class="warn">Set exact views / likes on one specific blog — separate from the follower/points ✏️ Adjust on the People tab, which spreads reads across a user's whole catalog instead of targeting one post.</div>
+  <table>
+    <tr><th>Title</th><th>Author</th><th>Email</th><th>Views</th><th>Likes</th><th></th></tr>
     ${d.posts.map((p) => `<tr>
       <td>${esc(p.title)}<div class="meta">${esc(p.section)} · ${esc(p.source)}</div></td>
       <td>@${esc(p.handle || 'desk')}</td>
       <td>${esc(p.email || '')}</td>
       <td>${p.unique_views}</td>
-      <td><button class="btn" data-id="${p.id}" data-h="${p.hidden ? 0 : 1}">${p.hidden ? 'Unhide' : 'Hide'}</button></td>
+      <td>${p.likes || 0}</td>
+      <td>
+        <button class="btn" data-edit="${p.id}" data-views="${p.unique_views || 0}" data-likes="${p.likes || 0}">✏️ Set metrics</button>
+        <button class="btn" data-id="${p.id}" data-h="${p.hidden ? 0 : 1}">${p.hidden ? 'Unhide' : 'Hide'}</button>
+      </td>
     </tr>`).join('')}
   </table>`;
   app.onclick = async (e) => {
-    const b = e.target.closest('button'); if (!b || !b.dataset.id) return;
-    await api('/api/admin/hide-post', { method: 'POST', body: { id: b.dataset.id, hidden: Number(b.dataset.h) } });
-    boot();
+    const b = e.target.closest('button'); if (!b) return;
+    try {
+      if (b.dataset.edit) {
+        return openFormModal('✏️ Set blog metrics', [
+          { key: 'views', label: 'Unique views (exact)', value: Number(b.dataset.views) },
+          { key: 'likes', label: 'Likes (exact)', value: Number(b.dataset.likes) }
+        ], async (v) => {
+          await api('/api/admin/edit-post-metrics', { method: 'POST', body: { id: b.dataset.edit, ...v } });
+          toast('Blog metrics set'); showPosts();
+        });
+      }
+      if (!b.dataset.id) return;
+      await api('/api/admin/hide-post', { method: 'POST', body: { id: b.dataset.id, hidden: Number(b.dataset.h) } });
+      showPosts();
+    } catch (err) { toast(err.message); }
   };
 }
 
@@ -380,6 +398,35 @@ async function showWallets() {
   };
   document.getElementById('wq').oninput = debounce(render, 200);
   render();
+}
+
+/* generic inline modal form — replaces raw prompt()/confirm() popups so
+   admin actions look like this desk, not a browser alert box */
+function openFormModal(title, fields, onSubmit) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `<div class="modal-box" style="max-width:420px">
+    <div class="modal-head"><h3>${esc(title)}</h3><button class="modal-x" id="mfX">✕</button></div>
+    <div id="mfFields"></div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn solid" id="mfSave">Save</button>
+      <button class="btn" id="mfCancel">Cancel</button>
+    </div>
+  </div>`;
+  document.body.appendChild(backdrop);
+  const fieldsBox = backdrop.querySelector('#mfFields');
+  fieldsBox.innerHTML = fields.map((f) => `<label>${esc(f.label)}</label><input id="mf_${esc(f.key)}" type="number" step="${f.step || '1'}" value="${f.value ?? 0}">`).join('');
+  const close = () => { backdrop.remove(); document.removeEventListener('keydown', onEsc); };
+  const onEsc = (e) => { if (e.key === 'Escape') close(); };
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+  document.addEventListener('keydown', onEsc);
+  backdrop.querySelector('#mfX').onclick = close;
+  backdrop.querySelector('#mfCancel').onclick = close;
+  backdrop.querySelector('#mfSave').onclick = async () => {
+    const values = {};
+    for (const f of fields) values[f.key] = Number(document.getElementById('mf_' + f.key).value) || 0;
+    try { await onSubmit(values); close(); } catch (e) { toast(e.message); }
+  };
 }
 
 async function openWalletModal(id) {
