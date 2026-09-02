@@ -353,13 +353,15 @@ async function showChatMonitor(page = 1) {
 
 async function showPayouts() {
   const d = await api('/api/admin/payouts');
-  app.innerHTML = `<div class="warn">Pay only against unique reads stored in post_views. There is no view-boost endpoint.</div>
+  app.innerHTML = `<div class="warn">Approving a payout <b>deducts the amount from the user's earned balance</b> (their Earn page drops instantly). Rejecting refunds it if it was already deducted. Mark paid only after the crypto transfer is done.
+  </div>
   <table>
-    <tr><th>Who</th><th>USD</th><th>Wallet</th><th>Status</th><th></th></tr>
+    <tr><th>Who</th><th>USD</th><th>Wallet</th><th>Balance</th><th>Status</th><th></th></tr>
     ${d.payouts.map((p) => `<tr>
       <td>@${esc(p.handle)}<div class="meta">${esc(p.email)}</div></td>
-      <td>${p.amount_usd}</td>
+      <td><b>$${p.amount_usd}</b></td>
       <td class="meta">${esc(p.wallet)}</td>
+      <td>${p.deducted ? '<span class="tag">✓ wallet deducted</span>' : '<span class="meta">not yet</span>'}</td>
       <td>${esc(p.status)}</td>
       <td>
         <button class="btn" data-id="${p.id}" data-s="approved">Approve</button>
@@ -370,8 +372,11 @@ async function showPayouts() {
   </table>`;
   app.onclick = async (e) => {
     const b = e.target.closest('button'); if (!b || !b.dataset.id) return;
-    await api('/api/admin/payout-status', { method: 'POST', body: { id: b.dataset.id, status: b.dataset.s } });
-    boot();
+    try {
+      const r = await api('/api/admin/payout-status', { method: 'POST', body: { id: b.dataset.id, status: b.dataset.s } });
+      toast(r.wallet_deducted ? 'Balance deducted from user wallet' : 'Status updated');
+      showPayouts();
+    } catch (err) { toast(err.message); }
   };
 }
 
@@ -384,13 +389,15 @@ async function showWallets() {
   const render = async () => {
     const d = await api('/api/admin/wallets?q=' + encodeURIComponent(document.getElementById('wq').value));
     document.getElementById('wTbl').innerHTML = `<table>
-      <tr><th>Handle</th><th>University</th><th>Wallet</th><th>Reads</th><th>Earned</th><th>Payout</th><th></th></tr>
+      <tr><th>Handle</th><th>University</th><th>Wallet</th><th>Reads</th><th>Earned</th><th>Paid out</th><th>Available</th><th>Payout</th><th></th></tr>
       ${d.wallets.map((w) => `<tr>
         <td><b>@${esc(w.handle)}</b></td>
         <td>${esc(w.college_name || '—')}</td>
         <td class="mono">${w.wallet ? esc(w.wallet.slice(0, 10)) + '…' : '— not saved'}</td>
         <td>${w.unique_views}</td>
         <td class="wallet-earned"><b>$${Number(w.earned_usd || 0).toFixed(2)}</b></td>
+        <td>${w.paid_out_usd ? '$' + Number(w.paid_out_usd).toFixed(2) : '—'}</td>
+        <td><b class="wallet-earned">$${Number(w.available_usd || 0).toFixed(2)}</b></td>
         <td>${w.payout_eligible ? '<span class="tag wallet-eligible">eligible</span>' : '<span class="meta">not yet</span>'}</td>
         <td><button class="btn" data-view="${w.id}">View blogs</button></td>
       </tr>`).join('') || '<tr><td colspan="7" class="meta">No writer has earned anything yet.</td></tr>'}
@@ -451,6 +458,8 @@ async function openWalletModal(id) {
       </div>
       <div class="stat-grid">
         <div class="stat"><b class="wallet-earned">$${d.totals.earned_usd.toFixed(2)}</b>total earned</div>
+        <div class="stat"><b>$${Number(d.totals.paid_out_usd || 0).toFixed(2)}</b>paid out</div>
+        <div class="stat"><b class="wallet-earned">$${Number(d.totals.available_usd || 0).toFixed(2)}</b>available</div>
         <div class="stat"><b>${d.totals.unique_views}</b>unique reads</div>
         <div class="stat"><b>${d.posts.length}</b>blogs</div>
       </div>

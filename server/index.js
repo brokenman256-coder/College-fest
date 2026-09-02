@@ -301,7 +301,8 @@ async function payoutEligible(u) {
   const views = await uniqueViewsOf(u._id);
   const viewEarnings = Math.round(views * RATES.usd_per_view * 100) / 100;
   const referralEarnings = Math.round((u.referral_credit_usd || 0) * 100) / 100;
-  const estimated_usd = Math.round((viewEarnings + referralEarnings) * 100) / 100;
+  const paidOut = Math.round((u.paid_out_usd || 0) * 100) / 100;
+  const estimated_usd = Math.round((viewEarnings + referralEarnings - paidOut) * 100) / 100;
   return {
     ok: u.status === 'active' && (u.follower_count || 0) >= RATES.min_followers && views >= RATES.min_unique_views && estimated_usd >= RATES.min_payout_usd && !!u.wallet,
     followers: u.follower_count || 0,
@@ -310,6 +311,7 @@ async function payoutEligible(u) {
     min_unique_views: RATES.min_unique_views,
     view_earnings_usd: viewEarnings,
     referral_earnings_usd: referralEarnings,
+    paid_out_usd: paidOut,
     estimated_usd,
     usd_per_view: RATES.usd_per_view,
     min_payout_usd: RATES.min_payout_usd,
@@ -1084,10 +1086,12 @@ async function handleApi(req, res, url) {
       const view_earnings_usd = Math.round(views * RATES.usd_per_view * 100) / 100;
       const referral_earnings_usd = Math.round((usr.referral_credit_usd || 0) * 100) / 100;
       const earned_usd = Math.round((view_earnings_usd + referral_earnings_usd) * 100) / 100;
+      const paid_out_usd = Math.round((usr.paid_out_usd || 0) * 100) / 100;
+      const available_usd = Math.round((earned_usd - paid_out_usd) * 100) / 100;
       const payout_eligible = usr.status === 'active' && (usr.follower_count || 0) >= RATES.min_followers &&
-        views >= RATES.min_unique_views && earned_usd >= RATES.min_payout_usd && !!usr.wallet;
-      return { ...adminUser(usr), unique_views: views, view_earnings_usd, referral_earnings_usd, earned_usd, payout_eligible };
-    }).filter((w) => w.wallet || w.earned_usd > 0).sort((a, b) => b.earned_usd - a.earned_usd);
+        views >= RATES.min_unique_views && available_usd >= RATES.min_payout_usd && !!usr.wallet;
+      return { ...adminUser(usr), unique_views: views, view_earnings_usd, referral_earnings_usd, earned_usd, paid_out_usd, available_usd, payout_eligible };
+    }).filter((w) => w.wallet || w.earned_usd > 0).sort((a, b) => b.available_usd - a.available_usd);
     return send(res, 200, { wallets });
   }
 
@@ -1110,6 +1114,7 @@ async function handleApi(req, res, url) {
     const totalViews = posts.reduce((s, p) => s + (p.unique_views || 0), 0);
     const viewEarnings = Math.round(totalViews * RATES.usd_per_view * 100) / 100;
     const referralEarnings = Math.round((target.referral_credit_usd || 0) * 100) / 100;
+    const paidOutUsd = Math.round((target.paid_out_usd || 0) * 100) / 100;
     return send(res, 200, {
       user: adminUser(target),
       payout: await payoutEligible(target),
@@ -1117,7 +1122,9 @@ async function handleApi(req, res, url) {
         unique_views: totalViews,
         view_earnings_usd: viewEarnings,
         referral_earnings_usd: referralEarnings,
-        earned_usd: Math.round((viewEarnings + referralEarnings) * 100) / 100
+        earned_usd: Math.round((viewEarnings + referralEarnings) * 100) / 100,
+        paid_out_usd: paidOutUsd,
+        available_usd: Math.round((viewEarnings + referralEarnings - paidOutUsd) * 100) / 100
       },
       referrals: referrals.map((r) => ({ id: r._id, referred_handle: r.referred_handle, status: r.status, bonus_usd: r.bonus_usd, created_at: r.created_at })),
       posts: posts.map((p) => ({
@@ -1269,9 +1276,24 @@ async function handleApi(req, res, url) {
     const id = String(body.id || '');
     const status = String(body.status || '');
     if (!['approved', 'paid', 'rejected', 'pending'].includes(status)) return send(res, 400, { error: 'Bad status.' });
-    await db.collection('payouts').updateOne({ _id: id }, { $set: { status } });
-    await audit(u._id, 'payout_' + status, id, '');
-    return send(res, 200, { ok: true });
+    const pay = await db.collection('payouts').findOne({ _id: id });
+    if (!pay) return send(res, 404, { error: 'Payout not found.' });
+    // wallet ledger: approving deducts the amount from the user's balance (once),
+    // rejecting refunds it if it was already deducted.
+    let deducted = pay.deducted === true;
+    if (status === 'approved' && !deducted && pay.user_id) {
+      await db.collection('users').updateOne({ _id: pay.user_id }, { $inc: { paid_out_usd: pay.amount_usd } });
+      deducted = true;
+      await db.collection('payouts').updateOne({ _id: id }, { $set: { status, deducted, deducted_at: now() } });
+    } else if (status === 'rejected' && pay.deducted === true && pay.user_id) {
+      await db.collection('users').updateOne({ _id: pay.user_id }, { $inc: { paid_out_usd: -pay.amount_usd } });
+      deducted = false;
+      await db.collection('payouts').updateOne({ _id: id }, { $set: { status, deducted, refunded_at: now() } });
+    } else {
+      await db.collection('payouts').updateOne({ _id: id }, { $set: { status } });
+    }
+    await audit(u._id, 'payout_' + status, id, `amount:${pay.amount_usd},wallet_deducted:${deducted}`);
+    return send(res, 200, { ok: true, wallet_deducted: deducted });
   }
 
   if (method === 'GET' && pathname === '/api/admin/reports') {

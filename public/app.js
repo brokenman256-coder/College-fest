@@ -720,7 +720,7 @@ async function showEarn() {
     <div class="anon-note" style="margin:16px 0 0">🆔 <b>Your unique ID: ${esc(d.me.handle)}</b> · ⬆ <b>${d.me.points || 0} points</b> earned from likes on your stories and profile. Everyone else sees only this ID — never you.</div>
     <div class="balance-box">
       <div class="usd">$${p.estimated_usd.toFixed(2)}</div>
-      <div class="cap">earned from ${p.unique_views} unique real reads · $${(p.usd_per_view || 0.002).toFixed(3)} per read${p.referral_earnings_usd ? ` · +$${p.referral_earnings_usd.toFixed(2)} from referrals` : ''}</div>
+      <div class="cap">earned from ${p.unique_views} unique real reads · $${(p.usd_per_view || 0.002).toFixed(3)} per read${p.referral_earnings_usd ? ` · +$${p.referral_earnings_usd.toFixed(2)} from referrals` : ''}${p.paid_out_usd ? ` · <b>−$${p.paid_out_usd.toFixed(2)} already withdrawn</b>` : ''}</div>
       <div class="progress"><i style="width:${Math.min(100, (p.estimated_usd / p.min_payout_usd) * 100)}%"></i></div>
       <div class="cap">withdrawal unlocks at <b>$${p.min_payout_usd}</b> — $${Math.max(0, p.min_payout_usd - p.estimated_usd).toFixed(2)} to go</div>
     </div>
