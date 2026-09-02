@@ -31,7 +31,12 @@ async function boot() {
   who.textContent = ME && ME.role === 'admin' ? '@desk · Backbench' : 'desk locked';
   nav.innerHTML = '';
   if (!ME || ME.role !== 'admin') return showLogin();
-  const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['promos','Promo bot'],['access','Access'],['logo','Logo'],['blog','Blog bot'],['audit','Audit']];
+  const tabs = [
+    ['overview','📊 Overview'],['users','🧑‍🤝‍🧑 People'],['wallets','💰 Wallets'],['posts','📝 Posts'],
+    ['chat','💬 DMs'],['room','🏛 Town hall'],['payouts','🏦 Payouts'],['rates','⚙️ Rates'],
+    ['reports','🚩 Reports'],['events','🎉 Events'],['prompts','🖊 Prompts'],['promos','📣 Promo bot'],
+    ['access','🔑 Access'],['logo','🎨 Logo'],['blog','🤖 Blog bot'],['audit','📜 Audit']
+  ];
   const hash = (location.hash || '#overview').slice(1);
   for (const [id, label] of tabs) {
     const b = document.createElement('button');
@@ -41,15 +46,17 @@ async function boot() {
     nav.appendChild(b);
   }
   const out = document.createElement('button');
-  out.textContent = 'Log out'; out.className = 'btn danger';
+  out.textContent = '⏻ Log out'; out.className = 'btn danger desk-logout';
   out.onclick = async () => { await api('/api/auth/logout', { method: 'POST', body: {} }); location.reload(); };
   nav.appendChild(out);
   const page = hash || 'overview';
   if (page === 'users') return showUsers();
+  if (page === 'wallets') return showWallets();
   if (page === 'posts') return showPosts();
   if (page === 'chat') return showChatMonitor();
   if (page === 'room') return showRoom();
   if (page === 'payouts') return showPayouts();
+  if (page === 'rates') return showRates();
   if (page === 'reports') return showReports();
   if (page === 'events') return showEvents();
   if (page === 'prompts') return showPrompts();
@@ -200,6 +207,7 @@ async function showUsers() {
         <td><b>$${Number(u.earned_usd || 0).toFixed(2)}</b></td>
         <td class="mono">${u.wallet ? esc(u.wallet.slice(0, 10)) + '…' : '—'}</td>
         <td>
+          <button class="btn" data-wallet="${u.id}" title="see wallet + per-blog earnings">💰 Wallet</button>
           <button class="btn good" data-boost="${u.id}" title="add or decrease followers / reads / points / profile likes">⚡ Boost</button>
           <button class="btn" data-act="active" data-id="${u.id}">Unsuspend</button>
           <button class="btn" data-act="suspended" data-id="${u.id}">Suspend</button>
@@ -211,6 +219,7 @@ async function showUsers() {
     document.getElementById('tbl').onclick = async (e) => {
       const b = e.target.closest('button'); if (!b) return;
       try {
+        if (b.dataset.wallet) return openWalletModal(b.dataset.wallet);
         if (b.dataset.boost) {
           const f = prompt('Followers — add (negative to decrease):', '100');
           if (f === null) return;
@@ -341,6 +350,105 @@ async function showPayouts() {
     const b = e.target.closest('button'); if (!b || !b.dataset.id) return;
     await api('/api/admin/payout-status', { method: 'POST', body: { id: b.dataset.id, status: b.dataset.s } });
     boot();
+  };
+}
+
+async function showWallets() {
+  app.innerHTML = `<div class="warn">Every writer's wallet in one place — total earned, unique reads, and which blog paid for it. Pulled live from unique reads, no boosted views.</div>
+  <div class="card">
+    <input id="wq" placeholder="search handle or university">
+    <div id="wTbl"></div>
+  </div>`;
+  const render = async () => {
+    const d = await api('/api/admin/wallets?q=' + encodeURIComponent(document.getElementById('wq').value));
+    document.getElementById('wTbl').innerHTML = `<table>
+      <tr><th>Handle</th><th>University</th><th>Wallet</th><th>Reads</th><th>Earned</th><th>Payout</th><th></th></tr>
+      ${d.wallets.map((w) => `<tr>
+        <td><b>@${esc(w.handle)}</b></td>
+        <td>${esc(w.college_name || '—')}</td>
+        <td class="mono">${w.wallet ? esc(w.wallet.slice(0, 10)) + '…' : '— not saved'}</td>
+        <td>${w.unique_views}</td>
+        <td class="wallet-earned"><b>$${Number(w.earned_usd || 0).toFixed(2)}</b></td>
+        <td>${w.payout_eligible ? '<span class="tag wallet-eligible">eligible</span>' : '<span class="meta">not yet</span>'}</td>
+        <td><button class="btn" data-view="${w.id}">View blogs</button></td>
+      </tr>`).join('') || '<tr><td colspan="7" class="meta">No writer has earned anything yet.</td></tr>'}
+    </table>`;
+    document.getElementById('wTbl').onclick = (e) => {
+      const b = e.target.closest('button[data-view]'); if (!b) return;
+      openWalletModal(b.dataset.view);
+    };
+  };
+  document.getElementById('wq').oninput = debounce(render, 200);
+  render();
+}
+
+async function openWalletModal(id) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = '<div class="modal-box"><p class="meta">Loading wallet…</p></div>';
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+  const onEsc = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onEsc); } };
+  document.addEventListener('keydown', onEsc);
+  try {
+    const d = await api('/api/admin/wallet?id=' + encodeURIComponent(id));
+    backdrop.querySelector('.modal-box').innerHTML = `
+      <div class="modal-head">
+        <h3>💰 @${esc(d.user.handle)}'s wallet</h3>
+        <button class="modal-x" id="mx">✕</button>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><b class="wallet-earned">$${d.totals.earned_usd.toFixed(2)}</b>total earned</div>
+        <div class="stat"><b>${d.totals.unique_views}</b>unique reads</div>
+        <div class="stat"><b>${d.posts.length}</b>blogs</div>
+      </div>
+      <p class="meta">Wallet address: <span class="mono">${d.user.wallet ? esc(d.user.wallet) : 'not saved yet'}</span>
+        ${d.user.wallet ? '<button class="btn mini" id="copyWallet">copy</button>' : ''}
+      </p>
+      <p class="meta">${esc(d.user.email || '—')} · ${esc(d.user.college_name || 'no university on file')} · status: ${esc(d.user.status)}</p>
+      <h3 style="margin-top:14px">Earnings by blog</h3>
+      ${d.posts.map((p) => `<div class="mini-row">
+        <span class="section-label">${esc(p.section || '')}</span>
+        <b>${esc(p.title)}</b>
+        <span class="meta">${p.unique_views} unique reads · <b class="wallet-earned">$${p.earned_usd.toFixed(2)}</b>${p.hidden ? ' · hidden' : ''}</span>
+      </div>`).join('') || '<p class="meta">No blogs published yet.</p>'}
+      ${d.payouts.length ? `<h3 style="margin-top:14px">Payout history</h3>
+      ${d.payouts.map((p) => `<div class="mini-row">
+        <b>$${Number(p.amount_usd).toFixed(2)}</b>
+        <span class="meta">${esc(p.status)} · ${esc((p.created_at || '').slice(0, 10))}</span>
+      </div>`).join('')}` : ''}`;
+    document.getElementById('mx').onclick = close;
+    const cw = document.getElementById('copyWallet');
+    if (cw) cw.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(d.user.wallet); toast('Wallet address copied'); };
+  } catch (e) {
+    backdrop.querySelector('.modal-box').innerHTML = `<p class="meta">${esc(e.message)}</p><button class="btn" id="mx2">Close</button>`;
+    document.getElementById('mx2').onclick = close;
+  }
+}
+
+async function showRates() {
+  const d = await api('/api/admin/payout-settings');
+  const r = d.rates;
+  app.innerHTML = `<div class="card" style="max-width:480px">
+    <h3>⚙️ Payout rates</h3>
+    <p class="meta">Controls what every writer earns and when a payout unlocks. Changes apply instantly, site-wide.</p>
+    <label>USD per unique read</label><input id="rUsd" type="number" step="0.001" min="0" value="${r.usd_per_view}">
+    <label>Minimum followers to unlock payout</label><input id="rFol" type="number" min="0" value="${r.min_followers}">
+    <label>Minimum unique reads to unlock payout</label><input id="rViews" type="number" min="0" value="${r.min_unique_views}">
+    <label>Minimum payout amount (USD)</label><input id="rMin" type="number" min="1" value="${r.min_payout_usd}">
+    <button class="btn solid" id="rSave">Save rates</button>
+  </div>`;
+  document.getElementById('rSave').onclick = async () => {
+    try {
+      await api('/api/admin/payout-settings', { method: 'POST', body: {
+        usd_per_view: Number(document.getElementById('rUsd').value),
+        min_followers: Number(document.getElementById('rFol').value),
+        min_unique_views: Number(document.getElementById('rViews').value),
+        min_payout_usd: Number(document.getElementById('rMin').value)
+      }});
+      toast('Payout rates updated'); showRates();
+    } catch (e) { toast(e.message); }
   };
 }
 
@@ -648,4 +756,35 @@ window.addEventListener('keyup', (e) => {
     setTimeout(() => deskShield(false), 1600);
   }
 });
+
+/* ---- right-click, printing, and dev-tools shortcuts are deterrents only —
+   no webpage can truly stop an OS-level screenshot or a phone camera. This
+   raises the bar for casual capture/export of identities and wallets. ---- */
+document.addEventListener('contextmenu', (e) => { if (deskGuard()) e.preventDefault(); });
+window.addEventListener('keydown', (e) => {
+  if (!deskGuard()) return;
+  const k = (e.key || '').toUpperCase();
+  const devtoolsCombo = (e.ctrlKey || e.metaKey) && e.shiftKey && ['I', 'J', 'C', 'K'].includes(k);
+  const viewSource = (e.ctrlKey || e.metaKey) && k === 'U';
+  const savePage = (e.ctrlKey || e.metaKey) && k === 'S';
+  if (k === 'F12' || devtoolsCombo || viewSource || savePage) {
+    e.preventDefault();
+    deskShield(true, 'Dev tools / page-save are restricted on the desk');
+    setTimeout(() => deskShield(false), 1600);
+  }
+});
+(function watchDevtoolsSize() {
+  let open = false;
+  setInterval(() => {
+    if (!deskGuard()) return;
+    const wide = window.outerWidth - window.innerWidth > 180;
+    const tall = window.outerHeight - window.innerHeight > 180;
+    const nowOpen = wide || tall;
+    if (nowOpen !== open) {
+      open = nowOpen;
+      deskShield(open, open ? 'Dev tools detected — desk hidden' : '');
+    }
+  }, 1200);
+})();
+
 boot();
