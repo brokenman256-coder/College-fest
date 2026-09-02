@@ -35,6 +35,25 @@ function stopChatPoll() {
   if (chatPoll) { clearInterval(chatPoll); chatPoll = null; }
 }
 
+/* ---- referrals: capture ?ref=<inviter handle> once, keep it until signup uses it ---- */
+(function capturePendingRef() {
+  try {
+    const ref = new URLSearchParams(location.search).get('ref');
+    if (ref) {
+      localStorage.setItem('bb_ref', ref.slice(0, 40));
+      const clean = new URL(location.href);
+      clean.searchParams.delete('ref');
+      history.replaceState({}, '', clean.pathname + clean.search + clean.hash);
+    }
+  } catch (e) {}
+})();
+function pendingRef() {
+  try { return localStorage.getItem('bb_ref') || ''; } catch (e) { return ''; }
+}
+function clearPendingRef() {
+  try { localStorage.removeItem('bb_ref'); } catch (e) {}
+}
+
 /* ---- privacy shield: blur the whole app when the tab is hidden, window loses focus, or a screenshot key fires ---- */
 let chatViewOpen = false;
 function shield(on, why) {
@@ -149,7 +168,8 @@ function renderAuth() {
     const email = inp.value.trim().toLowerCase();
     if (!email) return toast('Enter your email.');
     try {
-      const r = await api('/api/auth/login', { method: 'POST', body: { email } });
+      const r = await api('/api/auth/login', { method: 'POST', body: { email, ref: pendingRef() } });
+      clearPendingRef();
       toast(r.created ? 'Mask on: @' + r.me.handle : 'Welcome back, @' + r.me.handle);
       boot();
     } catch (e) { toast(e.message); }
@@ -157,7 +177,10 @@ function renderAuth() {
   document.getElementById('go').onclick = login;
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
   const gbtn = document.getElementById('gLogin');
-  if (gbtn) gbtn.onclick = () => { location.href = '/api/auth/google'; };
+  if (gbtn) gbtn.onclick = () => {
+    const ref = pendingRef();
+    location.href = '/api/auth/google' + (ref ? '?ref=' + encodeURIComponent(ref) : '');
+  };
 }
 
 /* ================= MAIN APP ================= */
@@ -170,6 +193,7 @@ async function boot() {
   }
   META = await api('/api/meta');
   if (!META.me) return renderAuth();
+  clearPendingRef();
   paintLogo();
   authRoot.classList.add('hidden');
   shell.classList.remove('hidden');
@@ -696,7 +720,7 @@ async function showEarn() {
     <div class="anon-note" style="margin:16px 0 0">🆔 <b>Your unique ID: ${esc(d.me.handle)}</b> · ⬆ <b>${d.me.points || 0} points</b> earned from likes on your stories and profile. Everyone else sees only this ID — never you.</div>
     <div class="balance-box">
       <div class="usd">$${p.estimated_usd.toFixed(2)}</div>
-      <div class="cap">earned from ${p.unique_views} unique real reads · $${(p.usd_per_view || 0.002).toFixed(3)} per read</div>
+      <div class="cap">earned from ${p.unique_views} unique real reads · $${(p.usd_per_view || 0.002).toFixed(3)} per read${p.referral_earnings_usd ? ` · +$${p.referral_earnings_usd.toFixed(2)} from referrals` : ''}</div>
       <div class="progress"><i style="width:${Math.min(100, (p.estimated_usd / p.min_payout_usd) * 100)}%"></i></div>
       <div class="cap">withdrawal unlocks at <b>$${p.min_payout_usd}</b> — $${Math.max(0, p.min_payout_usd - p.estimated_usd).toFixed(2)} to go</div>
     </div>
@@ -741,6 +765,18 @@ async function showEarn() {
         <span class="meta">${x.unique_views} unique reads · <b style="color:var(--accent)">$${Number(x.earned_usd || 0).toFixed(2)}</b></span>
       </div>`).join('') || '<p class="meta">Nothing published yet — <a href="#write">write your first story</a>.</p>'}
     </div>
+    <div class="card">
+      <h3>💌 Invite &amp; earn</h3>
+      <p class="meta">Share your link. When someone signs up through it and passes ID verification, you earn <b>$${Number(d.referral.bonus_usd || 0.02).toFixed(2)}</b> — no cap.</p>
+      <div class="row">
+        <input id="refLink" readonly value="${esc(location.origin)}/?ref=${encodeURIComponent(d.referral.code)}">
+        <button class="btn" id="copyRef">copy link</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span class="stat" style="margin:0"><b>$${Number(d.referral.credited_usd || 0).toFixed(2)}</b><span class="delta">earned from ${d.referral.credited_count || 0} verified referral${d.referral.credited_count === 1 ? '' : 's'}</span></span>
+        ${d.referral.pending_count ? `<span class="stat" style="margin:0"><b>${d.referral.pending_count}</b><span class="delta">pending verification</span></span>` : ''}
+      </div>
+    </div>
   </div>`;
   document.getElementById('saveW').onclick = async () => {
     try { await api('/api/me/wallet', { method: 'POST', body: { wallet: document.getElementById('wallet').value } }); toast('Wallet saved'); showEarn(); }
@@ -749,6 +785,12 @@ async function showEarn() {
   document.getElementById('pay').onclick = async () => {
     try { const r = await api('/api/payouts/request', { method: 'POST', body: {} }); toast('Payout requested: $' + r.amount_usd); showEarn(); }
     catch (e) { toast(e.message); }
+  };
+  document.getElementById('copyRef').onclick = () => {
+    const inp = document.getElementById('refLink');
+    inp.select();
+    navigator.clipboard && navigator.clipboard.writeText(inp.value);
+    toast('Referral link copied');
   };
 }
 

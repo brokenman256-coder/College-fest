@@ -6,6 +6,7 @@ const { db, uid, now, SECTIONS, connectDB, getSetting, setSetting } = require('.
 const blogBot = require('./blogBot');
 const campaignBot = require('./campaignBot');
 const chatBot = require('./chatBot');
+const aiDetectBot = require('./aiDetectBot');
 require('dotenv').config();
 
 const PORT = Number(process.env.PORT || 8787);
@@ -19,11 +20,15 @@ let RATES = {
   min_followers: 25,
   min_unique_views: 200,
   usd_per_view: 0.002,
-  min_payout_usd: 100 // withdrawal milestone — smaller requests are not paid out
+  min_payout_usd: 100, // withdrawal milestone — smaller requests are not paid out
+  referral_bonus_usd: 0.02 // paid to the referrer once the referred account is ID-verified
 };
-async function loadRates() {
+let AI_DETECT_ON = true;
+async function loadSiteSettings() {
   const saved = await getSetting('payout_rates', null);
   if (saved && typeof saved === 'object') RATES = { ...RATES, ...saved };
+  const aiOn = await getSetting('ai_detect_on', null);
+  if (aiOn !== null) AI_DETECT_ON = !!aiOn;
 }
 
 let ADMIN = null;
@@ -175,7 +180,7 @@ function baseUrlOf(req) {
   return proto + '://' + (req.headers.host || 'localhost:' + PORT);
 }
 
-async function loginOrCreateByEmail(email) {
+async function loginOrCreateByEmail(email, refHandle) {
   const ehash = emailHash(email);
   let user = await db.collection('users').findOne({ email_hash: ehash });
   let created = false;
@@ -184,6 +189,9 @@ async function loginOrCreateByEmail(email) {
     const handle = await nextAnonHandle();
     const allow = await db.collection('admin_allowlist').findOne({ email });
     const id = uid('usr');
+    let referrer = null;
+    const cleanRef = String(refHandle || '').trim().slice(0, 40);
+    if (cleanRef) referrer = await db.collection('users').findOne({ handle: cleanRef, role: 'student' });
     await db.collection('users').insertOne({
       _id: id,
       email_enc: encryptEmail(email),
@@ -201,8 +209,24 @@ async function loginOrCreateByEmail(email) {
       likes_count: 0,
       points: 0,
       wallet: null,
+      referred_by: referrer ? referrer._id : null,
+      referral_credit_usd: 0,
       created_at: now()
     });
+    if (referrer) {
+      await db.collection('referrals').updateOne(
+        { referred_id: id },
+        { $setOnInsert: {
+          _id: uid('ref'),
+          referrer_id: referrer._id,
+          referred_id: id,
+          bonus_usd: RATES.referral_bonus_usd,
+          status: 'pending',
+          created_at: now()
+        } },
+        { upsert: true }
+      );
+    }
     user = await db.collection('users').findOne({ _id: id });
     created = true;
   }
@@ -275,17 +299,33 @@ async function uniqueViewsOf(userId) {
 
 async function payoutEligible(u) {
   const views = await uniqueViewsOf(u._id);
+  const viewEarnings = Math.round(views * RATES.usd_per_view * 100) / 100;
+  const referralEarnings = Math.round((u.referral_credit_usd || 0) * 100) / 100;
+  const estimated_usd = Math.round((viewEarnings + referralEarnings) * 100) / 100;
   return {
-    ok: u.status === 'active' && (u.follower_count || 0) >= RATES.min_followers && views >= RATES.min_unique_views && Math.round(views * RATES.usd_per_view * 100) / 100 >= RATES.min_payout_usd && !!u.wallet,
+    ok: u.status === 'active' && (u.follower_count || 0) >= RATES.min_followers && views >= RATES.min_unique_views && estimated_usd >= RATES.min_payout_usd && !!u.wallet,
     followers: u.follower_count || 0,
     min_followers: RATES.min_followers,
     unique_views: views,
     min_unique_views: RATES.min_unique_views,
-    estimated_usd: Math.round(views * RATES.usd_per_view * 100) / 100,
+    view_earnings_usd: viewEarnings,
+    referral_earnings_usd: referralEarnings,
+    estimated_usd,
     usd_per_view: RATES.usd_per_view,
     min_payout_usd: RATES.min_payout_usd,
     wallet: u.wallet || null
   };
+}
+
+/* pays the referrer once (and only once) their referred signup clears ID
+   verification — verification is the anti-farming gate given personal
+   emails are allowed for signup. */
+async function creditReferralIfDue(referredUserId) {
+  const ref = await db.collection('referrals').findOne({ referred_id: referredUserId, status: 'pending' });
+  if (!ref) return null;
+  await db.collection('referrals').updateOne({ _id: ref._id }, { $set: { status: 'credited', credited_at: now() } });
+  await db.collection('users').updateOne({ _id: ref.referrer_id }, { $inc: { referral_credit_usd: ref.bonus_usd } });
+  return ref;
 }
 
 async function audit(adminId, action, targetId, detail) {
@@ -420,7 +460,7 @@ async function handleApi(req, res, url) {
     const email = String(body.email || '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter a valid email.' });
     if (!rateLimit('login:' + emailHash(email), 15, 10 * 60 * 1000)) return send(res, 429, { error: 'Too many attempts. Wait a few minutes.' });
-    const r = await loginOrCreateByEmail(email);
+    const r = await loginOrCreateByEmail(email, body.ref);
     if (r.error) return send(res, 403, { error: r.error });
     setSession(res, r.token);
     return send(res, 200, { ok: true, created: r.created, me: publicUser(r.user) });
@@ -430,7 +470,8 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/auth/google') {
     if (!googleConfigured()) return send(res, 400, { error: 'Google sign-in is not configured yet.' });
     const state = crypto.randomBytes(16).toString('hex');
-    res.setHeader('set-cookie', `g_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`);
+    const ref = String(url.searchParams.get('ref') || '').replace(/[^a-zA-Z0-9_#]/g, '').slice(0, 40);
+    res.setHeader('set-cookie', `g_state=${state}.${encodeURIComponent(ref)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`);
     const redirect = baseUrlOf(req) + '/api/auth/google/callback';
     const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
       client_id: GOOGLE_CID,
@@ -454,7 +495,10 @@ async function handleApi(req, res, url) {
       const q = url.searchParams;
       if (q.get('error')) return back('Google sign-in was cancelled.');
       const state = q.get('state') || '';
-      if (!state || state !== (parseCookies(req).g_state || '')) return back('Google sign-in expired. Try again.');
+      const cookieRaw = parseCookies(req).g_state || '';
+      const [cookieState, cookieRefEnc] = cookieRaw.split('.');
+      if (!state || state !== cookieState) return back('Google sign-in expired. Try again.');
+      const ref = cookieRefEnc ? decodeURIComponent(cookieRefEnc) : '';
       if (!googleConfigured()) return back('Google sign-in is not configured.');
       const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
@@ -475,7 +519,7 @@ async function handleApi(req, res, url) {
       const ui = await uiRes.json();
       const email = String(ui.email || '').trim().toLowerCase();
       if (!email || !ui.email_verified) return back('Verify your email in that Google account first.');
-      const r = await loginOrCreateByEmail(email);
+      const r = await loginOrCreateByEmail(email, ref);
       if (r.error) return back(r.error);
       setSession(res, r.token);
       return back();
@@ -609,6 +653,9 @@ async function handleApi(req, res, url) {
     const section = SECTIONS.some((s) => s.id === body.section) ? body.section : curatorSection(title, text);
     const flags = curatorFlags(title, text);
     const id = uid('post');
+    // AI-likelihood is a triage signal only — the post still publishes and
+    // stays live either way; a flag just surfaces it in the desk for review.
+    const ai = AI_DETECT_ON ? aiDetectBot.scoreAIlikelihood(title + '\n\n' + text) : { score: 0, reasons: [] };
     await db.collection('posts').insertOne({
       _id: id,
       user_id: u._id,
@@ -621,6 +668,9 @@ async function handleApi(req, res, url) {
       source: 'student',
       source_url: null,
       hidden: flags.includes('urgent_moderation'),
+      ai_score: ai.score,
+      ai_flag: ai.score >= aiDetectBot.AI_FLAG_THRESHOLD,
+      ai_reasons: ai.reasons,
       created_at: now()
     });
     return send(res, 200, { ok: true, id, section, flags, note: flags.includes('urgent_moderation') ? 'Hidden for staff review.' : 'Published as ' + u.handle });
@@ -752,13 +802,24 @@ async function handleApi(req, res, url) {
       { user_id: u._id },
       { projection: { section: 1, title: 1, unique_views: 1, hidden: 1, created_at: 1 } }
     ).sort({ created_at: -1 }).toArray();
+    const [pendingRefs, creditedRefs] = await Promise.all([
+      db.collection('referrals').countDocuments({ referrer_id: u._id, status: 'pending' }),
+      db.collection('referrals').countDocuments({ referrer_id: u._id, status: 'credited' })
+    ]);
     return send(res, 200, {
       me: u.role === 'admin' ? adminUser(u) : { ...publicUser(u), email: u.email_enc ? decryptEmail(u.email_enc) : null, college_id: u.college_id, wallet: u.wallet },
       posts: mine.map((p) => ({
         id: p._id, ...p, _id: undefined,
         earned_usd: Math.round((p.unique_views || 0) * RATES.usd_per_view * 100) / 100
       })),
-      payout: await payoutEligible(u)
+      payout: await payoutEligible(u),
+      referral: {
+        code: u.handle,
+        bonus_usd: RATES.referral_bonus_usd,
+        credited_usd: Math.round((u.referral_credit_usd || 0) * 100) / 100,
+        credited_count: creditedRefs,
+        pending_count: pendingRefs
+      }
     });
   }
 
@@ -947,7 +1008,7 @@ async function handleApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/admin/overview') {
     const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-    const [users, banned, suspended, posts, postsWeek, signupsWeek, reports, chats, roomMsgs, pendingPayouts, pendingAgg, readsAgg, pointsAgg] = await Promise.all([
+    const [users, banned, suspended, posts, postsWeek, signupsWeek, reports, chats, roomMsgs, pendingPayouts, pendingAgg, readsAgg, pointsAgg, aiFlags, referralsCredited] = await Promise.all([
       db.collection('users').countDocuments({ role: 'student' }),
       db.collection('users').countDocuments({ status: 'banned' }),
       db.collection('users').countDocuments({ status: 'suspended' }),
@@ -960,7 +1021,9 @@ async function handleApi(req, res, url) {
       db.collection('payouts').countDocuments({ status: 'pending' }),
       db.collection('payouts').aggregate([{ $match: { status: 'pending' } }, { $group: { _id: null, sum: { $sum: '$amount_usd' } } }]).toArray(),
       db.collection('posts').aggregate([{ $group: { _id: null, sum: { $sum: '$unique_views' } } }]).toArray(),
-      db.collection('users').aggregate([{ $match: { role: 'student' } }, { $group: { _id: null, sum: { $sum: { $ifNull: ['$points', 0] } } } }]).toArray()
+      db.collection('users').aggregate([{ $match: { role: 'student' } }, { $group: { _id: null, sum: { $sum: { $ifNull: ['$points', 0] } } } }]).toArray(),
+      db.collection('posts').countDocuments({ ai_flag: true, hidden: { $ne: true } }),
+      db.collection('referrals').countDocuments({ status: 'credited' })
     ]);
     const stats = {
       users, banned, suspended, posts, reports, chats,
@@ -971,7 +1034,10 @@ async function handleApi(req, res, url) {
       pending_usd: (pendingAgg[0] && pendingAgg[0].sum) || 0,
       total_reads: (readsAgg[0] && readsAgg[0].sum) || 0,
       usd_per_view: RATES.usd_per_view,
-      total_points: (pointsAgg[0] && pointsAgg[0].sum) || 0
+      total_points: (pointsAgg[0] && pointsAgg[0].sum) || 0,
+      ai_flags: aiFlags,
+      ai_detect_on: AI_DETECT_ON,
+      referrals_credited: referralsCredited
     };
     const [top_posts, recent_users, top_users] = await Promise.all([
       db.collection('posts').find({ hidden: { $ne: true } }).sort({ unique_views: -1 }).limit(5)
@@ -997,7 +1063,7 @@ async function handleApi(req, res, url) {
     return send(res, 200, {
       users: users.map((u) => ({
         ...adminUser(u),
-        earned_usd: Math.round((vmap.get(u._id) || 0) * RATES.usd_per_view * 100) / 100
+        earned_usd: Math.round(((vmap.get(u._id) || 0) * RATES.usd_per_view + (u.referral_credit_usd || 0)) * 100) / 100
       }))
     });
   }
@@ -1015,10 +1081,12 @@ async function handleApi(req, res, url) {
     const users = await db.collection('users').find(query).toArray();
     const wallets = users.map((usr) => {
       const views = vmap.get(usr._id) || 0;
-      const earned_usd = Math.round(views * RATES.usd_per_view * 100) / 100;
+      const view_earnings_usd = Math.round(views * RATES.usd_per_view * 100) / 100;
+      const referral_earnings_usd = Math.round((usr.referral_credit_usd || 0) * 100) / 100;
+      const earned_usd = Math.round((view_earnings_usd + referral_earnings_usd) * 100) / 100;
       const payout_eligible = usr.status === 'active' && (usr.follower_count || 0) >= RATES.min_followers &&
         views >= RATES.min_unique_views && earned_usd >= RATES.min_payout_usd && !!usr.wallet;
-      return { ...adminUser(usr), unique_views: views, earned_usd, payout_eligible };
+      return { ...adminUser(usr), unique_views: views, view_earnings_usd, referral_earnings_usd, earned_usd, payout_eligible };
     }).filter((w) => w.wallet || w.earned_usd > 0).sort((a, b) => b.earned_usd - a.earned_usd);
     return send(res, 200, { wallets });
   }
@@ -1032,11 +1100,26 @@ async function handleApi(req, res, url) {
       { projection: { title: 1, section: 1, unique_views: 1, hidden: 1, created_at: 1, likes: 1 } }
     ).sort({ unique_views: -1 }).toArray();
     const payoutHistory = await db.collection('payouts').find({ user_id: id }).sort({ created_at: -1 }).toArray();
+    const referrals = await db.collection('referrals').aggregate([
+      { $match: { referrer_id: id } },
+      { $sort: { created_at: -1 } },
+      { $lookup: { from: 'users', localField: 'referred_id', foreignField: '_id', as: 'ru' } },
+      { $addFields: { referred_handle: { $arrayElemAt: ['$ru.handle', 0] } } },
+      { $project: { ru: 0 } }
+    ]).toArray();
     const totalViews = posts.reduce((s, p) => s + (p.unique_views || 0), 0);
+    const viewEarnings = Math.round(totalViews * RATES.usd_per_view * 100) / 100;
+    const referralEarnings = Math.round((target.referral_credit_usd || 0) * 100) / 100;
     return send(res, 200, {
       user: adminUser(target),
       payout: await payoutEligible(target),
-      totals: { unique_views: totalViews, earned_usd: Math.round(totalViews * RATES.usd_per_view * 100) / 100 },
+      totals: {
+        unique_views: totalViews,
+        view_earnings_usd: viewEarnings,
+        referral_earnings_usd: referralEarnings,
+        earned_usd: Math.round((viewEarnings + referralEarnings) * 100) / 100
+      },
+      referrals: referrals.map((r) => ({ id: r._id, referred_handle: r.referred_handle, status: r.status, bonus_usd: r.bonus_usd, created_at: r.created_at })),
       posts: posts.map((p) => ({
         id: p._id, title: p.title, section: p.section, unique_views: p.unique_views || 0,
         earned_usd: Math.round((p.unique_views || 0) * RATES.usd_per_view * 100) / 100,
@@ -1048,7 +1131,7 @@ async function handleApi(req, res, url) {
 
   /* ---------- payout rates: admin-tunable economics ---------- */
   if (method === 'GET' && pathname === '/api/admin/payout-settings') {
-    return send(res, 200, { rates: RATES });
+    return send(res, 200, { rates: RATES, ai_detect_on: AI_DETECT_ON });
   }
 
   if (method === 'POST' && pathname === '/api/admin/payout-settings') {
@@ -1061,12 +1144,21 @@ async function handleApi(req, res, url) {
       min_followers: Math.round(clamp(body.min_followers, 0, 1000000, RATES.min_followers)),
       min_unique_views: Math.round(clamp(body.min_unique_views, 0, 10000000, RATES.min_unique_views)),
       usd_per_view: clamp(body.usd_per_view, 0, 10, RATES.usd_per_view),
-      min_payout_usd: clamp(body.min_payout_usd, 1, 1000000, RATES.min_payout_usd)
+      min_payout_usd: clamp(body.min_payout_usd, 1, 1000000, RATES.min_payout_usd),
+      referral_bonus_usd: clamp(body.referral_bonus_usd, 0, 10, RATES.referral_bonus_usd)
     };
     RATES = next;
     await setSetting('payout_rates', RATES);
     await audit(u._id, 'payout_rates_update', null, JSON.stringify(RATES));
     return send(res, 200, { ok: true, rates: RATES });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/ai-detect-toggle') {
+    const body = await readBody(req);
+    AI_DETECT_ON = !!body.on;
+    await setSetting('ai_detect_on', AI_DETECT_ON);
+    await audit(u._id, 'ai_detect_toggle', null, AI_DETECT_ON ? 'on' : 'off');
+    return send(res, 200, { ok: true, ai_detect_on: AI_DETECT_ON });
   }
 
   if (method === 'POST' && pathname === '/api/admin/user-boost') {
@@ -1117,6 +1209,8 @@ async function handleApi(req, res, url) {
     const id = String(body.id || '');
     await db.collection('users').updateOne({ _id: id }, { $set: { verified: true } });
     await audit(u._id, 'verify', id, 'college_id_ok');
+    const credited = await creditReferralIfDue(id);
+    if (credited) await audit(u._id, 'referral_credited', credited.referrer_id, `+$${credited.bonus_usd} for referring ${id}`);
     return send(res, 200, { ok: true });
   }
 
@@ -1526,7 +1620,7 @@ async function migrate() {
 
 async function main() {
   await connectDB();
-  await loadRates();
+  await loadSiteSettings();
   await migrate();
   ADMIN = await ensureAdmin();
   await ensureCampaigns();
