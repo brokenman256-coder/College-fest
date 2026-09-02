@@ -1,41 +1,42 @@
-/* ============ COLLEGE FEST — PAPER / PRINT SYSTEM ============
-   paper #F4F1EA · cards #FFFDF7 · rules 2px solid #14110F (always)
-   ink #14110F · soft ink #5C554D · accent #FF4A1C (links, upvotes, CTA)
-   highlighter #FFE566 (earnings) · radius 4px — nearly square */
+/* ============ COLLEGE FEST — MODERN CARD SYSTEM ============
+   light gray canvas #DAE0E6 · white cards · orange accent #FF4500
+   (upvotes/CTA) · blue links #0079D3 · gold highlighter (earnings)
+   rounded cards + soft shadows instead of the old print/newsprint look */
 
 :root{
-  --paper:#F4F1EA;
-  --card:#FFFDF7;
-  --card-2:#EFEAE0;
-  --ink:#14110F;
-  --ink-soft:#5C554D;
-  --rule:#14110F;
-  --accent:#FF4A1C;
-  --accent-2:#FFE566;
-  --accent-press:#E03A10;
+  --paper:#DAE0E6;
+  --card:#FFFFFF;
+  --card-2:#F6F7F8;
+  --ink:#1A1A1B;
+  --ink-soft:#787C7E;
+  --rule:#EDEFF1;
+  --accent:#FF4500;
+  --accent-2:#FFD635;
+  --accent-press:#E03D00;
   --on-accent:#FFFFFF;
-  --on-accent-2:var(--ink);
+  --on-accent-2:#1A1A1B;
   --danger:#C42B1C;
   --good:#1B7F33;
-  --warn-bg:#FDF3D7;
-  --warn-border:#C9A227;
-  --warn-text:#6B5416;
+  --warn-bg:#FFF6E5;
+  --warn-border:#E8A33D;
+  --warn-text:#7A4E00;
+  --link:#0079D3;
   /* legacy aliases — every rule below keeps working */
   --bg:var(--paper);
   --border:var(--rule);
-  --border-hover:var(--rule);
+  --border-hover:#D3D6DA;
   --text:var(--ink);
   --muted:var(--ink-soft);
   --font-head:'Instrument Serif',Georgia,serif;
   --font-body:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif;
   --font-mono:'JetBrains Mono',ui-monospace,'Courier New',monospace;
-  --radius:4px;
+  --radius:12px;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.55}
 
-a{color:var(--accent);text-decoration:underline;text-decoration-color:rgba(20,17,15,.35);text-underline-offset:2px}
-a:hover{color:var(--ink);text-decoration-color:var(--ink)}
+a{color:var(--link);text-decoration:underline;text-decoration-color:rgba(0,121,211,.35);text-underline-offset:2px}
+a:hover{color:var(--accent);text-decoration-color:var(--accent)}
 button,input,select,textarea{font-family:inherit}
 ::selection{background:var(--accent-2);color:var(--on-accent-2)}
 :focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
@@ -74,7 +75,7 @@ nav.tabs button.on{background:var(--card-2);border-color:var(--border-hover);col
   transition:border-color .12s,background .12s,color .12s}
 .btn:hover{border-color:var(--border-hover);background:var(--card-2)}
 .btn.solid{background:var(--ink);border-color:var(--ink);color:var(--card)}
-.btn.solid:hover{background:#332E29;border-color:#332E29}
+.btn.solid:hover{background:#2B2B2C;border-color:#2B2B2C}
 .btn.accent{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:650}
 .btn.accent:hover{background:var(--accent-press);border-color:var(--accent-press)}
 .btn.danger{border-color:var(--danger);color:var(--danger)}
@@ -90,7 +91,7 @@ input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--border
   margin:4px 0 12px;border-radius:10px;font-size:14.5px;outline:none;transition:border-color .12s,box-shadow .12s}
 input:hover,select:hover,textarea:hover{border-color:var(--border-hover)}
 input:focus,select:focus,textarea:focus{border-color:var(--muted)}
-input::placeholder,textarea::placeholder{color:#8A8378}
+input::placeholder,textarea::placeholder{color:#9AA0A6}
 label{display:block;color:var(--text);font-weight:600;font-size:12.5px;margin-top:6px}
 label .req{color:var(--muted);font-weight:700}
 .hint{font-size:12.5px;color:var(--muted);margin:0 0 10px}
@@ -296,53 +297,45 @@ body.desk .card h3{font-size:15.5px}
 .byline .anon-link{text-decoration:none}
 .byline .anon-link:hover{text-decoration:underline;text-decoration-color:var(--muted)}
 
-/* ---------- paper/print rules: 2px solid ink borders, nearly square ---------- */
-.card,.promo,.auth-card,.balance-box,.milestone,.stat,.contact,.anon-note,.handle-chip,.toast,.ed-modal,.logo-img{border-width:2px}
-.btn,.promo-cta,.contact,.toast{border-radius:4px}
-.btn{border:2px solid var(--rule)}
-.btn.mini{border-width:2px}
+/* ---------- modern surface system: soft borders + shadow elevation ---------- */
+.card,.promo,.auth-card,.balance-box,.milestone,.stat,.contact,.toast,.ed-modal{
+  box-shadow:0 1px 2px rgba(26,26,27,.06);
+}
+.card:hover,.contact:hover{box-shadow:0 2px 8px rgba(26,26,27,.10)}
 .btn.accent{border-color:var(--accent)}
 .btn.accent:hover{border-color:var(--accent-press)}
 .btn.accent:disabled{border-color:var(--accent)}
 .btn.danger{border-color:var(--danger)}
 .btn.good{border-color:var(--good)}
-input,select,textarea{border:2px solid var(--rule);border-radius:4px;background:var(--card)}
-input:focus,select:focus,textarea:focus{border-color:var(--rule)}
-header.top{border-width:2px;border-radius:4px}
-.top-search{border:2px solid var(--rule);border-radius:4px;background:var(--card)}
-table th,td{border-bottom:2px solid var(--rule)}
-.handle-chip{border-width:2px;border-radius:4px}
-.uni-tag{border-width:1.5px;border-radius:4px}
-.progress{border:2px solid var(--rule);background:var(--card)}
-.badge-dot{border-radius:4px}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+.top-search:focus{border-color:var(--accent)}
 
-/* highlighter = earnings */
-.balance-box{border:2px solid var(--rule)}
-.balance-box .usd{display:inline-block;color:var(--on-accent-2);background:var(--accent-2);padding:0 14px;border-radius:4px}
-.milestone.done{border-color:var(--ink);background:var(--card)}
+/* gold highlighter chip = earnings */
+.balance-box .usd{display:inline-block;color:var(--on-accent-2);background:var(--accent-2);padding:2px 16px;border-radius:8px}
+.milestone.done{border-color:var(--good);background:var(--card)}
 .milestone.done .m-label::after{content:' ⭐'}
-.milestone{border-width:2px}
-.stat{border-width:2px}
-.warn{border-width:2px}
+.milestone.done .tick{background:var(--good);border-color:var(--good)}
 .anon-note{border-left-width:3px}
 
-/* ---------- Backbench broadsheet feed ---------- */
-.broadsheet{border-top:2px solid var(--rule);margin-top:4px}
-.sheet-row{padding:16px 2px 13px;border-bottom:2px solid var(--rule)}
-.sheet-row h2{margin:0 0 6px;font-family:var(--font-head);font-weight:400;font-size:26px;line-height:1.2;letter-spacing:-.2px}
+/* ---------- Backbench feed — modern rounded card list ---------- */
+#list{display:flex;flex-direction:column;gap:10px}
+.sheet-row{padding:16px 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);
+  box-shadow:0 1px 2px rgba(26,26,27,.06);transition:box-shadow .15s ease,border-color .15s ease}
+.sheet-row:hover{box-shadow:0 3px 12px rgba(26,26,27,.10);border-color:var(--border-hover)}
+.sheet-row h2{margin:0 0 6px;font-family:var(--font-body);font-weight:700;font-size:19px;line-height:1.3;letter-spacing:-.1px}
 .sheet-row h2 a{color:var(--ink);border:none;text-decoration:none}
 .sheet-row h2 a:hover{color:var(--accent)}
 .sheet-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft)}
 .sheet-meta .pseudo b{font-weight:600;color:var(--ink)}
 .sheet-meta .pseudo a{color:var(--ink);text-decoration:none;border-bottom:1px dashed var(--ink-soft)}
 .sheet-meta .pseudo a:hover{color:var(--accent);border-bottom-color:var(--accent)}
-.earn-chip{background:var(--accent-2);color:var(--on-accent-2);padding:0 5px;border-radius:3px;font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.earn-chip{background:var(--accent-2);color:var(--on-accent-2);padding:1px 8px;border-radius:999px;font-family:var(--font-mono);font-size:11.5px;font-weight:600}
 .auth-hero .brand.has-logo::before{display:none}
 .brand .logo-img{margin-right:9px}
 .sheet-row .section-label{margin-bottom:4px}
 @media(max-width:640px){
-  .sheet-row{padding:13px 2px 11px}
-  .sheet-row h2{font-size:21px}
+  .sheet-row{padding:13px 14px}
+  .sheet-row h2{font-size:17px}
 }
 
 /* ============ ADMIN DESK — "CONTROL ROOM" THEME ============

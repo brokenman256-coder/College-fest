@@ -103,6 +103,8 @@ async function showOverview() {
       <div class="stat"><b>${s.suspended}</b>suspended</div>
       <div class="stat"><b>${s.banned}</b>banned</div>
       <div class="stat"><b>${s.reports}</b>open reports</div>
+      <div class="stat"><b>${s.ai_flags || 0}</b>🤖 AI-likely posts<span class="delta">detector ${s.ai_detect_on ? 'on' : 'off'} · Posts tab</span></div>
+      <div class="stat"><b>${s.referrals_credited || 0}</b>referrals paid</div>
     </div>
     <div class="grid">
       <div class="card">
@@ -244,14 +246,16 @@ async function showUsers() {
 async function showPosts() {
   const d = await api('/api/admin/posts');
   app.innerHTML = `<div class="warn">Set exact views / likes on one specific blog — separate from the follower/points ✏️ Adjust on the People tab, which spreads reads across a user's whole catalog instead of targeting one post.</div>
+  <div class="warn">🤖 AI-detection is a heuristic triage signal, not a verdict — flagged posts stay live. It only tells you what's worth a human look. Toggle it from the Rates tab.</div>
   <table>
-    <tr><th>Title</th><th>Author</th><th>Email</th><th>Views</th><th>Likes</th><th></th></tr>
+    <tr><th>Title</th><th>Author</th><th>Email</th><th>Views</th><th>Likes</th><th>AI likelihood</th><th></th></tr>
     ${d.posts.map((p) => `<tr>
       <td>${esc(p.title)}<div class="meta">${esc(p.section)} · ${esc(p.source)}</div></td>
       <td>@${esc(p.handle || 'desk')}</td>
       <td>${esc(p.email || '')}</td>
       <td>${p.unique_views}</td>
       <td>${p.likes || 0}</td>
+      <td>${p.ai_flag ? `<span class="tag" style="color:var(--danger);border-color:var(--danger)" title="${esc((p.ai_reasons || []).join('; '))}">🤖 ${p.ai_score}%</span>` : (p.ai_score ? `<span class="meta">${p.ai_score}%</span>` : '<span class="meta">—</span>')}</td>
       <td>
         <button class="btn" data-edit="${p.id}" data-views="${p.unique_views || 0}" data-likes="${p.likes || 0}">✏️ Set metrics</button>
         <button class="btn" data-id="${p.id}" data-h="${p.hidden ? 0 : 1}">${p.hidden ? 'Unhide' : 'Hide'}</button>
@@ -460,6 +464,12 @@ async function openWalletModal(id) {
         <b>${esc(p.title)}</b>
         <span class="meta">${p.unique_views} unique reads · <b class="wallet-earned">$${p.earned_usd.toFixed(2)}</b>${p.hidden ? ' · hidden' : ''}</span>
       </div>`).join('') || '<p class="meta">No blogs published yet.</p>'}
+      ${d.totals.referral_earnings_usd ? `<p class="meta" style="margin-top:8px">+ <b class="wallet-earned">$${d.totals.referral_earnings_usd.toFixed(2)}</b> from referrals (below)</p>` : ''}
+      ${d.referrals && d.referrals.length ? `<h3 style="margin-top:14px">💌 Referrals</h3>
+      ${d.referrals.map((r) => `<div class="mini-row">
+        <b>@${esc(r.referred_handle || 'unknown')}</b>
+        <span class="meta">${r.status === 'credited' ? `paid $${Number(r.bonus_usd).toFixed(2)}` : 'pending ID verification'} · ${esc((r.created_at || '').slice(0, 10))}</span>
+      </div>`).join('')}` : ''}
       ${d.payouts.length ? `<h3 style="margin-top:14px">Payout history</h3>
       ${d.payouts.map((p) => `<div class="mini-row">
         <b>$${Number(p.amount_usd).toFixed(2)}</b>
@@ -484,7 +494,14 @@ async function showRates() {
     <label>Minimum followers to unlock payout</label><input id="rFol" type="number" min="0" value="${r.min_followers}">
     <label>Minimum unique reads to unlock payout</label><input id="rViews" type="number" min="0" value="${r.min_unique_views}">
     <label>Minimum payout amount (USD)</label><input id="rMin" type="number" min="1" value="${r.min_payout_usd}">
+    <label>Referral bonus (USD per verified referral)</label><input id="rRef" type="number" step="0.001" min="0" value="${r.referral_bonus_usd}">
     <button class="btn solid" id="rSave">Save rates</button>
+  </div>
+  <div class="card" style="max-width:480px">
+    <h3>🤖 AI-detection bot</h3>
+    <p class="meta">Heuristic scoring runs on every new post — no external API, no cost. It only flags posts for the Posts tab to review; nothing is ever auto-hidden.</p>
+    <p>Status: <b>${d.ai_detect_on ? 'active' : 'paused'}</b></p>
+    <button class="btn ${d.ai_detect_on ? 'danger' : 'solid'}" id="aiTog">${d.ai_detect_on ? 'Pause detector' : 'Activate detector'}</button>
   </div>`;
   document.getElementById('rSave').onclick = async () => {
     try {
@@ -492,9 +509,16 @@ async function showRates() {
         usd_per_view: Number(document.getElementById('rUsd').value),
         min_followers: Number(document.getElementById('rFol').value),
         min_unique_views: Number(document.getElementById('rViews').value),
-        min_payout_usd: Number(document.getElementById('rMin').value)
+        min_payout_usd: Number(document.getElementById('rMin').value),
+        referral_bonus_usd: Number(document.getElementById('rRef').value)
       }});
       toast('Payout rates updated'); showRates();
+    } catch (e) { toast(e.message); }
+  };
+  document.getElementById('aiTog').onclick = async () => {
+    try {
+      await api('/api/admin/ai-detect-toggle', { method: 'POST', body: { on: !d.ai_detect_on } });
+      toast(d.ai_detect_on ? 'AI detector paused' : 'AI detector active'); showRates();
     } catch (e) { toast(e.message); }
   };
 }

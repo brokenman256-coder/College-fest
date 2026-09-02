@@ -30,6 +30,9 @@ async function connectDB() {
     await db.collection('chats').createIndex({ sender_handle: 1 });
     await db.collection('chats').createIndex({ receiver_handle: 1 });
     await db.collection('chats').createIndex({ timestamp: -1 });
+    await db.collection('referrals').createIndex({ referred_id: 1 }, { unique: true });
+    await db.collection('referrals').createIndex({ referrer_id: 1 });
+    await db.collection('posts').createIndex({ ai_flag: 1 });
   } catch (e) {
     console.error('MongoDB connection error:', e.message);
     process.exit(1);
