@@ -35,21 +35,21 @@ function stopChatPoll() {
   if (chatPoll) { clearInterval(chatPoll); chatPoll = null; }
 }
 
-/* ---- privacy shield: blur chats when window loses focus, tab-switch, or PrintScreen ---- */
+/* ---- privacy shield: blur the whole app when the tab is hidden, window loses focus, or a screenshot key fires ---- */
 let chatViewOpen = false;
 function shield(on, why) {
   if (on) { document.body.classList.add('shield'); if (why) toast(why); }
   else document.body.classList.remove('shield');
 }
-function shieldTick() { shield(chatViewOpen && document.hidden); }
-window.addEventListener('blur', () => { if (chatViewOpen) shield(true); });
-window.addEventListener('focus', () => { if (chatViewOpen && !document.hidden) setTimeout(() => shield(false), 200); });
+function guardActive() { return !!META.me; }
+window.addEventListener('blur', () => { if (guardActive()) shield(true); });
+window.addEventListener('focus', () => { if (guardActive() && !document.hidden) setTimeout(() => shield(false), 200); });
 document.addEventListener('visibilitychange', () => {
-  if (chatViewOpen) shield(document.hidden, document.hidden ? 'Chat hidden — privacy shield' : '');
+  if (guardActive()) shield(document.hidden, document.hidden ? 'Privacy shield — screenshots blocked' : '');
 });
 window.addEventListener('keyup', (e) => {
-  if (chatViewOpen && e.key === 'PrintScreen') {
-    shield(true, 'Screenshot blocked — privacy shield');
+  if (guardActive() && e.key === 'PrintScreen') {
+    shield(true, 'Screenshots are blocked on Backbench');
     try { navigator.clipboard.writeText(' '); } catch (err) {}
     setTimeout(() => shield(false), 1600);
   }

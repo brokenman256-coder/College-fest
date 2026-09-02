@@ -957,6 +957,7 @@ async function handleApi(req, res, url) {
       pending_payouts: pendingPayouts,
       pending_usd: (pendingAgg[0] && pendingAgg[0].sum) || 0,
       total_reads: (readsAgg[0] && readsAgg[0].sum) || 0,
+      usd_per_view: USD_PER_VIEW,
       total_points: (pointsAgg[0] && pointsAgg[0].sum) || 0
     };
     const [top_posts, recent_users, top_users] = await Promise.all([
@@ -974,8 +975,48 @@ async function handleApi(req, res, url) {
     const q = String(url.searchParams.get('q') || '').trim();
     const query = { role: 'student' };
     if (q) query.$or = [{ handle: rx(q) }, { college_name: rx(q) }, { college_id: rx(q) }];
+    const viewSums = await db.collection('posts').aggregate([
+      { $match: { source: 'student' } },
+      { $group: { _id: '$user_id', views: { $sum: '$unique_views' } } }
+    ]).toArray();
+    const vmap = new Map(viewSums.map((x) => [x._id, x.views]));
     const users = await db.collection('users').find(query).sort({ points: -1, created_at: -1 }).limit(200).toArray();
-    return send(res, 200, { users: users.map(adminUser) });
+    return send(res, 200, {
+      users: users.map((u) => ({
+        ...adminUser(u),
+        earned_usd: Math.round((vmap.get(u._id) || 0) * USD_PER_VIEW * 100) / 100
+      }))
+    });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/user-boost') {
+    const body = await readBody(req);
+    const id = String(body.id || '');
+    const target = await db.collection('users').findOne({ _id: id });
+    if (!target || target.role === 'admin') return send(res, 400, { error: 'Cannot boost that account.' });
+    const f = Math.max(-1000000, Math.min(1000000, Number(body.followers) || 0));
+    const v = Math.max(-1000000, Math.min(1000000, Number(body.reads) || 0));
+    const pt = Math.max(-1000000, Math.min(1000000, Number(body.points) || 0));
+    const lk = Math.max(-1000000, Math.min(1000000, Number(body.likes) || 0));
+    const inc = {};
+    if (f) inc.follower_count = f;
+    if (pt) inc.points = pt;
+    if (lk) inc.likes_count = lk;
+    if (Object.keys(inc).length) await db.collection('users').updateOne({ _id: id }, { $inc: inc });
+    if (v) {
+      const posts = await db.collection('posts').find({ user_id: id, source: 'student' }, { projection: { _id: 1 } }).toArray();
+      if (posts.length) {
+        const per = Math.floor(v / posts.length);
+        let rem = v % posts.length;
+        for (const p of posts) {
+          const add = per + (rem-- > 0 ? 1 : 0);
+          if (add) await db.collection('posts').updateOne({ _id: p._id }, { $inc: { unique_views: add } });
+        }
+      }
+    }
+    await audit(u._id, 'user_boost', id, `followers:${f},reads:${v},points:${pt},likes:${lk}`);
+    const fresh = await db.collection('users').findOne({ _id: id });
+    return send(res, 200, { ok: true, user: adminUser(fresh) });
   }
 
   if (method === 'POST' && pathname === '/api/admin/user-status') {

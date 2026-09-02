@@ -28,7 +28,7 @@ async function boot() {
     const m = await api('/api/meta');
     ME = m.me;
   } catch (e) { ME = null; }
-  who.textContent = ME && ME.role === 'admin' ? ME.email : 'desk locked';
+  who.textContent = ME && ME.role === 'admin' ? '@desk · Backbench' : 'desk locked';
   nav.innerHTML = '';
   if (!ME || ME.role !== 'admin') return showLogin();
   const tabs = [['overview','Overview'],['users','People'],['posts','Posts'],['chat','DMs'],['room','Town hall'],['payouts','Payouts'],['reports','Reports'],['events','Events'],['prompts','Prompts'],['promos','Promo bot'],['access','Access'],['logo','Logo'],['blog','Blog bot'],['audit','Audit']];
@@ -64,7 +64,7 @@ async function boot() {
 function showLogin() {
   app.innerHTML = `<div class="card" style="max-width:420px">
     <h3>Desk login</h3>
-    <label>Email</label><input id="email" value="brokenman256@gmail.com">
+    <label>Email</label><input id="email" placeholder="admin email" autocomplete="off">
     <label>Password</label><input id="pw" type="password" placeholder="admin password">
     <button class="btn solid" id="go">Enter</button>
     <p class="meta">Change ADMIN_PASSWORD in the environment before this is public.</p>
@@ -88,6 +88,7 @@ async function showOverview() {
       <div class="stat"><b>${s.users}</b>students<span class="delta">+${s.signups_week} this week</span></div>
       <div class="stat"><b>${s.posts}</b>posts<span class="delta">+${s.posts_week} this week</span></div>
       <div class="stat"><b>${s.total_reads}</b>unique reads</div>
+    <div class="stat"><b>$${((s.total_reads || 0) * (s.usd_per_view || 0.002)).toFixed(2)}</b>earned by writers<span class="delta">$${(s.usd_per_view || 0.002).toFixed(3)} per read</span></div>
       <div class="stat"><b>${s.total_points || 0}</b>⬆ points earned</div>
       <div class="stat"><b>${s.chats}</b>DMs</div>
       <div class="stat"><b>${s.room_messages}</b>town hall msgs</div>
@@ -188,7 +189,7 @@ async function showUsers() {
   const render = async () => {
     const d = await api('/api/admin/users?q=' + encodeURIComponent(document.getElementById('q').value));
     document.getElementById('tbl').innerHTML = `<table>
-      <tr><th>Unique ID</th><th>Identity (desk only)</th><th>University</th><th>Status</th><th>⬆ Points</th><th>Followers</th><th>Actions</th></tr>
+      <tr><th>Unique ID</th><th>Identity (desk only)</th><th>University</th><th>Status</th><th>⬆ Points</th><th>Followers</th><th>Earned</th><th>Wallet</th><th>Actions</th></tr>
       ${d.users.map((u) => `<tr>
         <td><b>@${esc(u.handle)}</b> ${u.verified ? '✓' : ''}</td>
         <td>${esc(u.email || '—')}<br>${esc(u.college_id || '')}</td>
@@ -196,7 +197,10 @@ async function showUsers() {
         <td>${esc(u.status)}</td>
         <td><b>${u.points || 0}</b></td>
         <td>${u.follower_count}</td>
+        <td><b>$${Number(u.earned_usd || 0).toFixed(2)}</b></td>
+        <td class="mono">${u.wallet ? esc(u.wallet.slice(0, 10)) + '…' : '—'}</td>
         <td>
+          <button class="btn good" data-boost="${u.id}" title="add or decrease followers / reads / points / profile likes">⚡ Boost</button>
           <button class="btn" data-act="active" data-id="${u.id}">Unsuspend</button>
           <button class="btn" data-act="suspended" data-id="${u.id}">Suspend</button>
           <button class="btn danger" data-act="banned" data-id="${u.id}">Ban</button>
@@ -207,7 +211,17 @@ async function showUsers() {
     document.getElementById('tbl').onclick = async (e) => {
       const b = e.target.closest('button'); if (!b) return;
       try {
-        if (b.dataset.v) await api('/api/admin/verify', { method: 'POST', body: { id: b.dataset.v } });
+        if (b.dataset.boost) {
+          const f = prompt('Followers — add (negative to decrease):', '100');
+          if (f === null) return;
+          const v = prompt('Unique reads to ADD — spread over their stories (negative to decrease):', '1000');
+          if (v === null) return;
+          const pt = prompt('Points to ADD (negative to decrease):', '50');
+          if (pt === null) return;
+          await api('/api/admin/user-boost', { method: 'POST', body: { id: b.dataset.boost, followers: Number(f), reads: Number(v), points: Number(pt) } });
+          toast('Metrics updated');
+        }
+        else if (b.dataset.v) await api('/api/admin/verify', { method: 'POST', body: { id: b.dataset.v } });
         else await api('/api/admin/user-status', { method: 'POST', body: { id: b.dataset.id, status: b.dataset.act } });
         toast('Updated'); render();
       } catch (err) { toast(err.message); }
@@ -615,4 +629,23 @@ function debounce(fn, ms) {
   let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); };
 }
 window.addEventListener('hashchange', () => boot());
+
+/* ---- screenshot guard: blur the desk when the tab is hidden or a screenshot key fires ---- */
+function deskShield(on, why) {
+  if (on) { document.body.classList.add('shield'); if (why) toast(why); }
+  else document.body.classList.remove('shield');
+}
+const deskGuard = () => !!(ME && ME.role === 'admin');
+window.addEventListener('blur', () => { if (deskGuard()) deskShield(true); });
+window.addEventListener('focus', () => { if (deskGuard() && !document.hidden) setTimeout(() => deskShield(false), 200); });
+document.addEventListener('visibilitychange', () => {
+  if (deskGuard()) deskShield(document.hidden, document.hidden ? 'Privacy shield — desk hidden' : '');
+});
+window.addEventListener('keyup', (e) => {
+  if (deskGuard() && e.key === 'PrintScreen') {
+    deskShield(true, 'Screenshots are blocked');
+    try { navigator.clipboard.writeText(' '); } catch (err) {}
+    setTimeout(() => deskShield(false), 1600);
+  }
+});
 boot();

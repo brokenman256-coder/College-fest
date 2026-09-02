@@ -243,7 +243,7 @@ th{color:var(--muted);font-size:10.5px;font-weight:600;text-transform:uppercase;
 
 /* ---------- chat privacy shield ---------- */
 body.shield #app{filter:blur(16px);user-select:none;pointer-events:none}
-body.shield #app::after{content:'Privacy shield — chat hidden';position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+body.shield #app::after{content:'Privacy shield — screenshots blocked';position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--muted);font-size:14px;z-index:50}
 .chat-msgs{user-select:none;-webkit-user-select:none}
 .msg-img{-webkit-user-drag:none}
@@ -273,6 +273,7 @@ body.desk .card h3{font-size:15.5px}
 @media(max-width:640px){
   header.top{flex-wrap:wrap}
   header.top h1{font-size:24px}
+  .top-search{order:5;flex-basis:100%;max-width:none;margin:2px 0 0}
   .auth-hero h1{font-size:32px}
   .bubble{max-width:92%}
   .card{padding:14px}
