@@ -27,10 +27,9 @@ function esc(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function tagFor(p) {
-  if (p.source === 'prompt') return '<span class="section-label prompt">staff prompt</span>';
   if (p.source === 'bot') return '<span class="section-label quill">🪶 quill brief · anonymous</span>';
   if (p.source === 'reddit') return '<span class="section-label reddit">sourced</span>';
-  return '<span class="section-label">' + esc(p.section) + '</span>';
+  return '';
 }
 function stopChatPoll() {
   if (chatPoll) { clearInterval(chatPoll); chatPoll = null; }
@@ -160,6 +159,14 @@ async function boot() {
   authRoot.classList.add('hidden');
   shell.classList.remove('hidden');
   who.innerHTML = '<b>@' + esc(META.me.handle) + '</b>' + (META.me.status !== 'active' ? ' · ' + esc(META.me.status) : '');
+  // top search bar — one wiring, every page
+  const ts = document.getElementById('topSearch');
+  if (ts && !ts.dataset.wired) {
+    ts.dataset.wired = '1';
+    ts.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && ts.value.trim()) location.hash = 'search?q=' + encodeURIComponent(ts.value.trim());
+    });
+  }
   nav.innerHTML = '';
   const tabs = [
     ['feed', 'Stories'], ['write', 'Write'], ['chat', 'Chat'], ['search', 'Search'], ['events', 'Events'],
@@ -233,25 +240,16 @@ function route() {
 }
 
 async function showFeed() {
-  const section = new URLSearchParams((location.hash.split('?')[1] || '')).get('section') || 'all';
-  const data = await api('/api/feed' + (section !== 'all' ? '?section=' + encodeURIComponent(section) : ''));
+  const data = await api('/api/feed');
   const promo = (META.campaigns || [])[0];
   app.innerHTML = `
     ${promo ? `<div class="promo"><div><b>${esc(promo.title)}</b><span>${esc(promo.body)}</span></div><button class="promo-cta" id="promoCta">${esc(promo.cta || 'Start writing')}</button></div>` : ''}
-    <div class="row" id="sec" style="margin:14px 0 6px"></div><div id="list"></div>`;
+    <div id="list"></div>`;
   if (promo) {
     document.getElementById('promoCta').onclick = () => {
       location.hash = promo.cta_link === 'earn' ? 'earn' : promo.cta_link === 'feed' ? 'feed' : 'write';
     };
   }
-  const sec = document.getElementById('sec');
-  [{ id: 'all', name: 'All' }, ...META.sections].forEach((s) => {
-    const b = document.createElement('button');
-    b.className = 'btn mini' + (s.id === section ? ' solid' : '');
-    b.textContent = s.name;
-    b.onclick = () => { location.hash = 'feed?section=' + s.id; };
-    sec.appendChild(b);
-  });
   document.getElementById('list').innerHTML = data.posts.map((p) => `
     <article class="card post-card">
       ${tagFor(p)}
@@ -264,7 +262,7 @@ async function showFeed() {
         <span class="mono">♥ ${p.likes || 0}</span>
       </div>
       <p class="excerpt">${esc(p.body.slice(0, 220))}${p.body.length > 220 ? '…' : ''}</p>
-    </article>`).join('') || '<p class="meta" style="padding:30px 0">No stories in this section yet. Be the first to <a href="#write">write one</a>.</p>';
+    </article>`).join('') || '<p class="meta" style="padding:30px 0">No stories yet. Be the first to <a href="#write">write one</a>.</p>';
 }
 
 async function showPost(id) {
@@ -335,8 +333,6 @@ function showWrite() {
   app.innerHTML = `<div class="card" style="max-width:720px;margin:26px auto">
     <h3 style="font-size:26px">Write a story</h3>
     <p class="meta">Published as <b>🎭 @${esc(META.me.handle)}</b> — readers never see your email. Only your university is attached so others can search it.</p>
-    <label>Section</label>
-    <select id="section">${META.sections.map((s) => `<option value="${s.id}">${s.name}</option>`).join('')}</select>
     <label>University name <span class="req">*</span></label>
     <input id="university" value="${esc(META.me.college_name || '')}" placeholder="e.g. MIT, NYU, University of Michigan" maxlength="120">
     <div class="fine" style="margin-bottom:12px">Readers will find this story when they search incidents at this university.</div>
@@ -348,7 +344,6 @@ function showWrite() {
   document.getElementById('pub').onclick = async () => {
     try {
       const r = await api('/api/posts', { method: 'POST', body: {
-        section: document.getElementById('section').value,
         university: document.getElementById('university').value,
         title: document.getElementById('title').value,
         body: document.getElementById('body').value
@@ -567,16 +562,19 @@ async function openConversation(handle) {
 
 /* ---------------- search: incidents at any university ---------------- */
 async function showSearch() {
+  const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+  const initialQ = params.get('q') || '';
+  const initialUni = params.get('university') || '';
   let unis = [];
   try { unis = (await api('/api/universities')).universities; } catch (e) {}
   app.innerHTML = `<div class="card" style="max-width:680px;margin:26px auto">
     <h3>Search incidents &amp; records by university</h3>
-    <p class="meta">Search what really happened at any university — safety records, dorm life, courses, internships. Everything stays anonymous.</p>
+    <p class="meta">Search what really happened at any university — safety, dorms, courses, internships. Everything stays anonymous.</p>
     <label>University</label>
-    <input id="uni" list="uniList" placeholder="e.g. MIT, NYU — or pick from the list">
+    <input id="uni" list="uniList" placeholder="e.g. MIT, NYU — or pick from the list" value="${esc(initialUni)}">
     <datalist id="uniList">${unis.map((x) => `<option value="${esc(x.name)}">${x.stories} stories</option>`).join('')}</datalist>
     <label>Keyword</label>
-    <input id="q" placeholder="hazing, fire alarm, professor, internship…">
+    <input id="q" placeholder="hazing, fire alarm, professor, internship…" value="${esc(initialQ)}">
     ${unis.length ? `<div class="row" style="flex-wrap:wrap;margin:10px 0 0">${unis.slice(0, 8).map((x) => `<button class="btn mini uni-chip" data-u="${esc(x.name)}">${esc(x.name)} <span class="mono">${x.stories}</span></button>`).join('')}</div>` : ''}
     <div id="out"></div>
   </div>`;
@@ -594,6 +592,8 @@ async function showSearch() {
   };
   document.getElementById('q').oninput = debounce(run, 250);
   document.getElementById('uni').oninput = debounce(run, 250);
+  // arriving from the top search bar (or a bookmarked query)? run immediately
+  if (initialQ || initialUni) run();
 }
 
 /* ---------------- user profile: follow, like, chat ---------------- */
