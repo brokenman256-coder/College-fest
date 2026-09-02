@@ -82,12 +82,6 @@ function avatarFor(handle) {
   if (/^anonymous#\d+$/i.test(h) || h === 'campus_desk') return '🎭';
   return initials(h);
 }
-function isSpyMail(email) {
-  return /(gmail|googlemail|yahoo|hotmail|outlook|live\.|msn|icloud|me\.com|aol|proton|gmx|mail\.ru|yandex|qq\.com|rediffmail|zoho)/i.test(String(email));
-}
-function isCollegeEmail(email) {
-  return /^@(?:[a-z0-9-]+\.)+(edu|edu\.in|edu\.au|edu\.pk|ac\.in|ac\.uk)$/i.test('@' + String(email).split('@').pop());
-}
 function anonLink(handle) {
   return '#u/' + encodeURIComponent(handle);
 }
@@ -118,15 +112,14 @@ function renderAuth() {
       </ul>
     </div>
     <div class="auth-card">
-      <h2>Log in with your university email</h2>
-      <label>University email <span class="req">*</span></label>
-      <input id="email" placeholder="you@university.edu" autocomplete="off">
+      <h2>Log in with your email</h2>
+      <label>Email <span class="req">*</span></label>
+      <input id="email" placeholder="you@college.edu — or any email" autocomplete="off">
       <div id="emailHint" class="fine hidden" style="margin-top:6px;color:var(--danger)"></div>
       <div class="anon-note">
-        🔒 <b>This will stay anonymous.</b> We only check that your email is a real university
-        address (.edu / .edu.in / .ac.in) — we never show it, never share it, never track it.
-        Your posts, likes, follows and chats are visible only as your anonymous# mask.
-        Personal mailboxes (Gmail, Outlook…) are blocked to keep this student-only.
+        🔒 <b>This will stay anonymous.</b> College email or personal — both work. We never show it,
+        never share it, never track it. Your posts, likes, follows and chats are visible only
+        as your anonymous# mask. A college email attaches your university so others can find your campus stories.
       </div>
       <button class="btn accent" id="go" style="width:100%;margin-top:12px">Enter anonymously →</button>
       ${META.google_enabled ? `
@@ -146,19 +139,15 @@ function renderAuth() {
   inp.addEventListener('input', () => {
     const v = inp.value.trim().toLowerCase();
     hint.classList.add('hidden');
-    if (v.includes('@') && isSpyMail(v)) {
-      hint.textContent = 'That is a personal mailbox (spy mail). Use your university .edu email.';
-      hint.classList.remove('hidden');
-    } else if (v.includes('@') && v.split('@')[1] && !isCollegeEmail(v)) {
-      hint.textContent = 'Hmm — that does not look like a university email (.edu / .edu.in / .ac.in).';
+    if (v.includes('@') && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) {
+      hint.textContent = 'That does not look like a complete email.';
       hint.classList.remove('hidden');
     }
   });
 
   async function login() {
     const email = inp.value.trim().toLowerCase();
-    if (!email) return toast('Enter your university email.');
-    if (isSpyMail(email)) return toast('No personal mail — use your university .edu email.');
+    if (!email) return toast('Enter your email.');
     try {
       const r = await api('/api/auth/login', { method: 'POST', body: { email } });
       toast(r.created ? 'Mask on: @' + r.me.handle : 'Welcome back, @' + r.me.handle);

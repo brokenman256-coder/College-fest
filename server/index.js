@@ -40,19 +40,18 @@ function emailHash(email) {
   return hash('em:' + String(email).trim().toLowerCase());
 }
 
-/* university identity derived from the email domain — never stored against a name */
+/* university identity derived from the email domain — personal mail → no university attached */
+const PERSONAL_DOMAINS = /(gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|live\.|msn|icloud|me\.com|mac\.com|aol|proton|tutanota|gmx|mail\.ru|yandex|qq\.com|163\.com|126\.com|rediffmail|zoho)/i;
 function universityFromEmail(email) {
   const dom = String(email).split('@')[1] || '';
+  if (PERSONAL_DOMAINS.test(dom)) return null;
   const core = dom.split('.').slice(0, -1).join(' ').trim();
   return core ? core.toUpperCase() : null;
 }
 
-/* "spy mail" — personal mailboxes are always rejected */
-const SPY_MAIL = /(gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|live\.|msn|icloud|me\.com|mac\.com|aol|proton|tutanota|gmx|mail\.ru|yandex|qq\.com|163\.com|126\.com|rediffmail|zoho)/i;
-function isSpyMail(email) { return SPY_MAIL.test(String(email)); }
 function isCampusEmail(email) {
-  if (ALLOW_ANY_EMAIL) return /.+@.+\..+/.test(email) && !isSpyMail(email);
-  return /@(?:[a-z0-9-]+\.)+(edu|edu\.in|edu\.au|edu\.pk|ac\.in|ac\.uk)$/i.test(String(email)) && !isSpyMail(email);
+  if (ALLOW_ANY_EMAIL) return /.+@.+\..+/.test(email);
+  return /@(?:[a-z0-9-]+\.)+(edu|edu\.in|edu\.au|edu\.pk|ac\.in|ac\.uk)$/i.test(String(email));
 }
 
 /* everyone looks the same: anonymous#11, anonymous#12, ... */
@@ -409,9 +408,7 @@ async function handleApi(req, res, url) {
   if (method === 'POST' && pathname === '/api/auth/login') {
     const body = await readBody(req);
     const email = String(body.email || '').trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter your university email.' });
-    if (isSpyMail(email)) return send(res, 400, { error: 'That is a personal mailbox (Gmail / Outlook etc.) — not allowed here. Use your university email so everyone stays anonymous.' });
-    if (!isCampusEmail(email)) return send(res, 400, { error: 'Use your university email — it should end in .edu (or .edu.in / .ac.in).' });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter a valid email.' });
     if (!rateLimit('login:' + emailHash(email), 15, 10 * 60 * 1000)) return send(res, 429, { error: 'Too many attempts. Wait a few minutes.' });
     const r = await loginOrCreateByEmail(email);
     if (r.error) return send(res, 403, { error: r.error });
@@ -468,8 +465,6 @@ async function handleApi(req, res, url) {
       const ui = await uiRes.json();
       const email = String(ui.email || '').trim().toLowerCase();
       if (!email || !ui.email_verified) return back('Verify your email in that Google account first.');
-      if (isSpyMail(email)) return back('That is a personal Google account — use your university Google account.');
-      if (!isCampusEmail(email)) return back('Only university accounts (.edu / .edu.in / .ac.in) can enter Backbench.');
       const r = await loginOrCreateByEmail(email);
       if (r.error) return back(r.error);
       setSession(res, r.token);
