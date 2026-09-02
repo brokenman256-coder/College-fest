@@ -368,6 +368,16 @@ body.desk{
   --warn-bg:#241D0C;
   --warn-border:#F5A623;
   --warn-text:#F3CD86;
+  /* legacy alias vars (defined once at :root as var(--ink) etc.) don't
+     re-resolve through an override further down the tree — they stay
+     pinned to the value they were computed with. Re-set them directly
+     so every rule that still reads --text/--muted/--bg/--border also
+     picks up the dark theme instead of showing stale light-theme colors. */
+  --bg:var(--paper);
+  --border:var(--rule);
+  --border-hover:var(--rule);
+  --text:var(--ink);
+  --muted:var(--ink-soft);
 }
 body.desk ::selection{background:var(--accent-2);color:var(--on-accent-2)}
 body.desk input::placeholder,body.desk textarea::placeholder{color:#5B6577}
