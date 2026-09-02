@@ -88,6 +88,7 @@ async function showOverview() {
       <div class="stat"><b>${s.users}</b>students<span class="delta">+${s.signups_week} this week</span></div>
       <div class="stat"><b>${s.posts}</b>posts<span class="delta">+${s.posts_week} this week</span></div>
       <div class="stat"><b>${s.total_reads}</b>unique reads</div>
+      <div class="stat"><b>${s.total_points || 0}</b>⬆ points earned</div>
       <div class="stat"><b>${s.chats}</b>DMs</div>
       <div class="stat"><b>${s.room_messages}</b>town hall msgs</div>
       <div class="stat"><b>${s.pending_payouts}</b>payouts waiting<span class="delta">$${Number(s.pending_usd || 0).toFixed(2)}</span></div>
@@ -110,6 +111,13 @@ async function showOverview() {
           <b>@${esc(u.handle)}</b> ${u.status !== 'active' ? `<span class="tag">${esc(u.status)}</span>` : ''}
           <span class="meta">${esc(u.college_name || '—')}${u.place ? ' · ' + esc(u.place) : ''} · ${esc((u.created_at || '').slice(0, 10))}</span>
         </div>`).join('') || '<p class="meta">No students yet.</p>'}
+      </div>
+      <div class="card">
+        <h3>Points leaders ⬆</h3>
+        ${(d.top_users || []).map((u) => `<div class="mini-row">
+          <b>@${esc(u.handle)}</b> ${u.status !== 'active' ? `<span class="tag">${esc(u.status)}</span>` : ''}
+          <span class="meta">⬆ ${u.points || 0} points · ♥ ${u.likes_count || 0} profile likes · ${u.follower_count || 0} followers · ${esc(u.college_name || '—')}</span>
+        </div>`).join('') || '<p class="meta">No points earned yet.</p>'}
       </div>
     </div>
     <div class="warn">Identities stay on this desk. Share a record with authorities only through a lawful request — export is the audit log plus user rows, not a fake-view dump.</div>`;
@@ -180,11 +188,13 @@ async function showUsers() {
   const render = async () => {
     const d = await api('/api/admin/users?q=' + encodeURIComponent(document.getElementById('q').value));
     document.getElementById('tbl').innerHTML = `<table>
-      <tr><th>Handle</th><th>Identity</th><th>Status</th><th>Followers</th><th>Actions</th></tr>
+      <tr><th>Unique ID</th><th>Identity (desk only)</th><th>University</th><th>Status</th><th>⬆ Points</th><th>Followers</th><th>Actions</th></tr>
       ${d.users.map((u) => `<tr>
-        <td>@${esc(u.handle)} ${u.verified ? '✓' : ''}</td>
-        <td>${esc(u.email || '—')}<br>${esc(u.phone || '')}<br>${esc(u.college_id || '')}</td>
+        <td><b>@${esc(u.handle)}</b> ${u.verified ? '✓' : ''}</td>
+        <td>${esc(u.email || '—')}<br>${esc(u.college_id || '')}</td>
+        <td>${esc(u.college_name || '—')}</td>
         <td>${esc(u.status)}</td>
+        <td><b>${u.points || 0}</b></td>
         <td>${u.follower_count}</td>
         <td>
           <button class="btn" data-act="active" data-id="${u.id}">Unsuspend</button>

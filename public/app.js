@@ -614,8 +614,10 @@ async function showProfile(handle) {
         <h3 style="font-size:26px;margin:0">@${esc(u2.handle)}</h3>
         <div class="meta">${esc(u2.college_name || 'university unknown')} · joined ${esc((u2.created_at || '').slice(0, 10))}</div>
         <div class="row" style="margin-top:10px">
+          <code class="handle-chip">🆔 ${esc(u2.handle)}</code>
           <span class="mono"><b>${u2.follower_count}</b> followers</span><span class="dot">·</span>
-          <span class="mono"><b>${u2.likes_count || 0}</b> likes</span><span class="dot">·</span>
+          <span class="mono"><b>${u2.likes_count || 0}</b> profile likes</span><span class="dot">·</span>
+          <span class="mono">⬆ <b>${u2.points || 0}</b> points</span><span class="dot">·</span>
           <span class="mono"><b>${d.posts.length}</b> stories</span>
         </div>
         ${!mine ? `<div class="row" style="margin-top:14px">
@@ -687,6 +689,7 @@ async function showEarn() {
   const pct = Math.min(100, Math.round((p.estimated_usd / p.min_payout_usd) * 100));
   const allDone = p.estimated_usd >= p.min_payout_usd && p.followers >= p.min_followers && p.unique_views >= p.min_unique_views && !!p.wallet;
   app.innerHTML = `<div style="max-width:640px;margin:26px auto">
+    <div class="anon-note" style="margin:16px 0 0">🆔 <b>Your unique ID: ${esc(d.me.handle)}</b> · ⬆ <b>${d.me.points || 0} points</b> earned from likes on your stories and profile. Everyone else sees only this ID — never you.</div>
     <div class="balance-box">
       <div class="usd">$${p.estimated_usd.toFixed(2)}</div>
       <div class="cap">earned from ${p.unique_views} unique real reads · $${(p.usd_per_view || 0.002).toFixed(3)} per read</div>
@@ -743,7 +746,11 @@ async function showMe() {
   app.innerHTML = `<div style="max-width:640px;margin:26px auto">
     <div class="card">
       <h3 style="font-size:26px">🎭 @${esc(d.me.handle)}</h3>
-      <div class="meta">This is your mask — it's all anyone sees. ${d.me.college_name ? 'University: ' + esc(d.me.college_name) + ' · ' : ''}Status: ${esc(d.me.status)} · followers ${d.me.follower_count} · likes ${d.me.likes_count || 0}</div>
+      <div class="row" style="margin:6px 0">
+        <code class="handle-chip">🆔 unique ID: ${esc(d.me.handle)}</code>
+        <span class="stat" style="margin:0;padding:8px 14px"><b>${d.me.points || 0}</b><span class="delta">⬆ points</span></span>
+      </div>
+      <div class="meta">This is your mask — it's all anyone sees. ${d.me.college_name ? 'University: ' + esc(d.me.college_name) + ' · ' : ''}Status: ${esc(d.me.status)} · followers ${d.me.follower_count} · profile likes ${d.me.likes_count || 0}</div>
       <div class="anon-note" style="margin-top:10px">🔒 Your email is stored encrypted and is never shown to anyone. We keep no IP logs. Your stories, likes, follows and chats carry only this mask.</div>
       <div class="row" style="margin-top:12px">
         <code class="handle-chip">chat: ${esc(META.chat_handle || '—')}</code>

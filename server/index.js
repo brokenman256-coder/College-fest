@@ -175,6 +175,7 @@ function publicUser(u) {
     verified: !!u.verified,
     follower_count: u.follower_count || 0,
     likes_count: u.likes_count || 0,
+    points: u.points || 0,
     college_name: u.college_name || null,
     created_at: u.created_at
   };
@@ -500,7 +501,11 @@ async function handleApi(req, res, url) {
       await db.collection('posts').updateOne({ _id: id }, { $inc: { likes: 1 } });
       liked = true;
     }
-    const fresh = await db.collection('posts').findOne({ _id: id }, { projection: { likes: 1 } });
+    const fresh = await db.collection('posts').findOne({ _id: id }, { projection: { likes: 1, user_id: 1 } });
+    // points: a like on a story gives its author +1 point
+    if (fresh && fresh.user_id) {
+      await db.collection('users').updateOne({ _id: fresh.user_id }, { $inc: { points: liked ? 1 : -1 } });
+    }
     return send(res, 200, { ok: true, likes: Math.max(0, fresh.likes || 0), liked });
   }
 
@@ -644,16 +649,18 @@ async function handleApi(req, res, url) {
     let liked;
     if (existing) {
       await db.collection('user_likes').deleteOne(key);
-      await db.collection('users').updateOne({ _id: target._id }, { $inc: { likes_count: -1 } });
+      await db.collection('users').updateOne({ _id: target._id }, { $inc: { likes_count: -1, points: -1 } });
       target.likes_count = Math.max(0, (target.likes_count || 0) - 1);
+      target.points = Math.max(0, (target.points || 0) - 1);
       liked = false;
     } else {
       await db.collection('user_likes').updateOne(key, { $setOnInsert: { ...key, created_at: now() } }, { upsert: true });
-      await db.collection('users').updateOne({ _id: target._id }, { $inc: { likes_count: 1 } });
+      await db.collection('users').updateOne({ _id: target._id }, { $inc: { likes_count: 1, points: 1 } });
       target.likes_count = (target.likes_count || 0) + 1;
+      target.points = (target.points || 0) + 1;
       liked = true;
     }
-    return send(res, 200, { ok: true, likes: target.likes_count, liked });
+    return send(res, 200, { ok: true, likes: target.likes_count, points: target.points, liked });
   }
 
   if (method === 'GET' && pathname === '/api/me') {
@@ -854,7 +861,7 @@ async function handleApi(req, res, url) {
 
   if (method === 'GET' && pathname === '/api/admin/overview') {
     const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-    const [users, banned, suspended, posts, postsWeek, signupsWeek, reports, chats, roomMsgs, pendingPayouts, pendingAgg, readsAgg] = await Promise.all([
+    const [users, banned, suspended, posts, postsWeek, signupsWeek, reports, chats, roomMsgs, pendingPayouts, pendingAgg, readsAgg, pointsAgg] = await Promise.all([
       db.collection('users').countDocuments({ role: 'student' }),
       db.collection('users').countDocuments({ status: 'banned' }),
       db.collection('users').countDocuments({ status: 'suspended' }),
@@ -866,7 +873,8 @@ async function handleApi(req, res, url) {
       db.collection('room_messages').countDocuments({}),
       db.collection('payouts').countDocuments({ status: 'pending' }),
       db.collection('payouts').aggregate([{ $match: { status: 'pending' } }, { $group: { _id: null, sum: { $sum: '$amount_usd' } } }]).toArray(),
-      db.collection('posts').aggregate([{ $group: { _id: null, sum: { $sum: '$unique_views' } } }]).toArray()
+      db.collection('posts').aggregate([{ $group: { _id: null, sum: { $sum: '$unique_views' } } }]).toArray(),
+      db.collection('users').aggregate([{ $match: { role: 'student' } }, { $group: { _id: null, sum: { $sum: { $ifNull: ['$points', 0] } } } }]).toArray()
     ]);
     const stats = {
       users, banned, suspended, posts, reports, chats,
@@ -875,22 +883,25 @@ async function handleApi(req, res, url) {
       room_messages: roomMsgs,
       pending_payouts: pendingPayouts,
       pending_usd: (pendingAgg[0] && pendingAgg[0].sum) || 0,
-      total_reads: (readsAgg[0] && readsAgg[0].sum) || 0
+      total_reads: (readsAgg[0] && readsAgg[0].sum) || 0,
+      total_points: (pointsAgg[0] && pointsAgg[0].sum) || 0
     };
-    const [top_posts, recent_users] = await Promise.all([
+    const [top_posts, recent_users, top_users] = await Promise.all([
       db.collection('posts').find({ hidden: { $ne: true } }).sort({ unique_views: -1 }).limit(5)
         .project({ title: 1, handle: 1, section: 1, unique_views: 1, likes: 1 }).toArray(),
       db.collection('users').find({ role: 'student' }).sort({ created_at: -1 }).limit(6)
-        .project({ handle: 1, college_name: 1, place: 1, status: 1, created_at: 1 }).toArray()
+        .project({ handle: 1, college_name: 1, place: 1, status: 1, created_at: 1 }).toArray(),
+      db.collection('users').find({ role: 'student', points: { $gt: 0 } }).sort({ points: -1 }).limit(8)
+        .project({ handle: 1, points: 1, likes_count: 1, follower_count: 1, college_name: 1, status: 1 }).toArray()
     ]);
-    return send(res, 200, { stats, top_posts, recent_users });
+    return send(res, 200, { stats, top_posts, recent_users, top_users });
   }
 
   if (method === 'GET' && pathname === '/api/admin/users') {
     const q = String(url.searchParams.get('q') || '').trim();
     const query = { role: 'student' };
     if (q) query.$or = [{ handle: rx(q) }, { college_name: rx(q) }, { college_id: rx(q) }];
-    const users = await db.collection('users').find(query).sort({ created_at: -1 }).limit(200).toArray();
+    const users = await db.collection('users').find(query).sort({ points: -1, created_at: -1 }).limit(200).toArray();
     return send(res, 200, { users: users.map(adminUser) });
   }
 
@@ -1304,6 +1315,18 @@ async function migrate() {
   }
   // 4) OTP bookkeeping is gone
   try { await db.collection('otps').drop(); } catch (e) {}
+  // 5) points backfill — every user's points = likes on their stories + likes on their profile
+  const fromPosts = await db.collection('post_likes').aggregate([
+    { $lookup: { from: 'posts', localField: 'post_id', foreignField: '_id', as: 'p' } },
+    { $unwind: '$p' },
+    { $group: { _id: '$p.user_id', n: { $sum: 1 } } }
+  ]).toArray();
+  const pointsMap = new Map(fromPosts.map((r) => [String(r._id), r.n]));
+  const fromProfiles = await db.collection('user_likes').aggregate([{ $group: { _id: '$target_id', n: { $sum: 1 } } }]).toArray();
+  for (const r of fromProfiles) pointsMap.set(String(r._id), (pointsMap.get(String(r._id)) || 0) + r.n);
+  for (const [userId, n] of pointsMap) {
+    if (userId && userId !== 'null') await db.collection('users').updateOne({ _id: userId }, { $set: { points: n } });
+  }
   if (raw.length || toRename.length) console.log('migrated users → encrypted emails + anonymous handles (' + raw.length + ' emails, ' + toRename.length + ' handles)');
 }
 
