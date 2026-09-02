@@ -1,0 +1,20 @@
+name: keep-alive
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # ping every 5 min so Render free instance never sleeps
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Backbench
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -m 60 -w "%{http_code}" https://backbench-tr76.onrender.com/api/health || echo fail)
+            echo "attempt $i: $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "::warning::backbench health check failed"
