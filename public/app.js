@@ -197,7 +197,30 @@ async function boot() {
   paintLogo();
   authRoot.classList.add('hidden');
   shell.classList.remove('hidden');
-  who.innerHTML = '<b>@' + esc(META.me.handle) + '</b>' + (META.me.status !== 'active' ? ' · ' + esc(META.me.status) : '');
+  who.innerHTML = `
+    <button class="who-btn" id="whoBtn"><b>@${esc(META.me.handle)}</b>${META.me.status !== 'active' ? ' · ' + esc(META.me.status) : ''} <span class="who-caret">▾</span></button>
+    <div class="who-menu hidden" id="whoMenu">
+      <button class="who-item" id="whoProfile">🎭 Your profile</button>
+      <button class="who-item" id="whoEarn">💰 Earn</button>
+      <div class="who-sep"></div>
+      <button class="who-item danger" id="whoLogout">⏻ Log out</button>
+    </div>`;
+  const whoMenu = document.getElementById('whoMenu');
+  document.getElementById('whoBtn').onclick = (e) => { e.stopPropagation(); whoMenu.classList.toggle('hidden'); };
+  document.getElementById('whoProfile').onclick = () => { whoMenu.classList.add('hidden'); location.hash = 'me'; };
+  document.getElementById('whoEarn').onclick = () => { whoMenu.classList.add('hidden'); location.hash = 'earn'; };
+  document.getElementById('whoLogout').onclick = async () => {
+    try { await api('/api/auth/logout', { method: 'POST', body: {} }); } catch (e) {}
+    location.hash = '';
+    location.reload();
+  };
+  if (!who.dataset.wired) {
+    who.dataset.wired = '1';
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('whoMenu');
+      if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target) && e.target.id !== 'whoBtn') menu.classList.add('hidden');
+    });
+  }
   // top search bar — one wiring, every page
   const ts = document.getElementById('topSearch');
   if (ts && !ts.dataset.wired) {

@@ -117,20 +117,26 @@ async function showOverview() {
       </div>
       <div class="card">
         <h3>Newest students</h3>
-        ${(d.recent_users || []).map((u) => `<div class="mini-row">
+        <p class="meta">Click anyone to open their wallet, posts and status.</p>
+        ${(d.recent_users || []).map((u) => `<div class="mini-row mini-click" data-wallet="${esc(u._id)}">
           <b>@${esc(u.handle)}</b> ${u.status !== 'active' ? `<span class="tag">${esc(u.status)}</span>` : ''}
           <span class="meta">${esc(u.college_name || '—')}${u.place ? ' · ' + esc(u.place) : ''} · ${esc((u.created_at || '').slice(0, 10))}</span>
         </div>`).join('') || '<p class="meta">No students yet.</p>'}
       </div>
       <div class="card">
         <h3>Points leaders ⬆</h3>
-        ${(d.top_users || []).map((u) => `<div class="mini-row">
+        <p class="meta">Click anyone to open their wallet, posts and status.</p>
+        ${(d.top_users || []).map((u) => `<div class="mini-row mini-click" data-wallet="${esc(u._id)}">
           <b>@${esc(u.handle)}</b> ${u.status !== 'active' ? `<span class="tag">${esc(u.status)}</span>` : ''}
           <span class="meta">⬆ ${u.points || 0} points · ♥ ${u.likes_count || 0} profile likes · ${u.follower_count || 0} followers · ${esc(u.college_name || '—')}</span>
         </div>`).join('') || '<p class="meta">No points earned yet.</p>'}
       </div>
     </div>
     <div class="warn">Identities stay on this desk. Share a record with authorities only through a lawful request — export is the audit log plus user rows, not a fake-view dump.</div>`;
+  app.onclick = (e) => {
+    const row = e.target.closest('.mini-click[data-wallet]'); if (!row) return;
+    openWalletModal(row.dataset.wallet);
+  };
 }
 
 async function showRoom() {

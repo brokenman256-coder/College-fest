@@ -54,8 +54,19 @@ header.top h1 a{color:var(--text);display:inline-flex;align-items:baseline;gap:9
 header.top h1 a::before{content:'';display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent);align-self:center}
 header.top h1 a:hover{color:#000}
 header.top .sub{color:var(--muted);font-size:13px;border:none;text-decoration:none}
-header.top .who{margin-left:auto;font-size:13px;color:var(--muted)}
+header.top .who{margin-left:auto;font-size:13px;color:var(--muted);position:relative}
 header.top .who b{color:var(--text);font-weight:600}
+.who-btn{background:none;border:none;cursor:pointer;font:inherit;color:inherit;display:inline-flex;align-items:center;gap:4px;padding:6px 4px}
+.who-btn:hover{color:var(--ink)}
+.who-caret{font-size:10px;color:var(--ink-soft)}
+.who-menu{position:absolute;top:calc(100% + 6px);right:0;background:var(--card);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 4px 16px rgba(26,26,27,.14);min-width:180px;padding:6px;z-index:100;text-align:left}
+.who-item{display:block;width:100%;text-align:left;background:none;border:none;padding:8px 10px;border-radius:8px;
+  cursor:pointer;font-size:13.5px;font-weight:500;color:var(--text)}
+.who-item:hover{background:var(--card-2)}
+.who-item.danger{color:var(--danger)}
+.who-item.danger:hover{background:rgba(196,43,28,.08)}
+.who-sep{height:1px;background:var(--border);margin:6px 2px}
 .top-search{flex:1;max-width:420px;margin:0 8px;padding:8px 14px;border:1px solid var(--border);background:var(--card-2);
   color:var(--text);border-radius:999px;font-size:13.5px;outline:none;transition:border-color .12s,background .12s}
 .top-search:focus{border-color:var(--rule);background:var(--card)}
@@ -214,6 +225,8 @@ th{color:var(--muted);font-size:10.5px;font-weight:600;text-transform:uppercase;
 .mini-row{padding:9px 0;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px}
 .mini-row:last-child{border-bottom:none}
 .mini-row .section-label{margin-bottom:0}
+.mini-row.mini-click{cursor:pointer;padding-left:8px;padding-right:8px;margin:0 -8px;border-radius:8px;transition:background .12s}
+.mini-row.mini-click:hover{background:var(--card-2)}
 
 .handle-chip{display:inline-block;padding:4px 11px;border:1px solid var(--border);border-radius:8px;
   font-family:var(--font-mono);font-weight:400;font-size:12.5px;background:var(--card-2);color:var(--text)}
