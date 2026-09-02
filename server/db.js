@@ -16,16 +16,16 @@ async function connectDB() {
 
     // --- indexes ---
     await db.collection('users').createIndex({ handle: 1 }, { unique: true });
-    await db.collection('users').createIndex({ email: 1 });
-    await db.collection('users').createIndex({ phone: 1 });
+    await db.collection('users').createIndex({ email_hash: 1 });
     await db.collection('sessions').createIndex({ token: 1 }, { unique: true });
-    await db.collection('otps').createIndex({ identifier: 1 }, { unique: true });
     await db.collection('posts').createIndex({ user_id: 1 });
     await db.collection('posts').createIndex({ created_at: -1 });
     await db.collection('posts').createIndex({ section: 1 });
+    await db.collection('posts').createIndex({ university: 1 });
     await db.collection('post_views').createIndex({ post_id: 1, viewer_key: 1 }, { unique: true });
     await db.collection('post_likes').createIndex({ post_id: 1, user_id: 1 }, { unique: true });
     await db.collection('follows').createIndex({ follower_id: 1, followee_id: 1 }, { unique: true });
+    await db.collection('user_likes').createIndex({ user_id: 1, target_id: 1 }, { unique: true });
     await db.collection('chats').createIndex({ chat_id: 1 }, { unique: true });
     await db.collection('chats').createIndex({ sender_handle: 1 });
     await db.collection('chats').createIndex({ receiver_handle: 1 });
@@ -54,12 +54,12 @@ async function setSetting(key, value) {
 }
 
 const SECTIONS = [
-  { id: 'safety', name: 'Safety & awareness', blurb: 'Ragging, harassment, night travel, hostels.' },
-  { id: 'courses', name: 'Courses & faculty', blurb: 'Reviews of papers, labs, and teachers.' },
-  { id: 'hostels', name: 'Hostels & mess', blurb: 'Food, wardens, roommates, rent.' },
+  { id: 'safety', name: 'Safety & awareness', blurb: 'Hazing, harassment, night safety, campus police records.' },
+  { id: 'courses', name: 'Courses & faculty', blurb: 'Reviews of classes, labs, TAs and professors.' },
+  { id: 'hostels', name: 'Dorms & dining', blurb: 'Roommates, RAs, dining halls, off-campus rent.' },
   { id: 'events', name: 'Campus events', blurb: 'Fests, clubs, talks — staff-added or student-reported.' },
   { id: 'confessions', name: 'Confessions', blurb: 'Anonymous to other students. Admin can still see the account.' },
-  { id: 'placements', name: 'Placements', blurb: 'Internships, companies, interview experiences.' }
+  { id: 'placements', name: 'Internships & jobs', blurb: 'Internships, offers, interviews, real pay.' }
 ];
 
 module.exports = { db, client, uid, now, SECTIONS, connectDB, getSetting, setSetting };

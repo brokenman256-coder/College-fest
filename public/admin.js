@@ -174,7 +174,7 @@ async function showRoom() {
 
 async function showUsers() {
   app.innerHTML = `<div class="card">
-    <input id="q" placeholder="search handle, email, phone, college id">
+    <input id="q" placeholder="search handle or university">
     <div id="tbl"></div>
   </div>`;
   const render = async () => {
@@ -461,7 +461,7 @@ async function showAccess() {
   const d = await api('/api/admin/allowlist');
   app.innerHTML = `<div class="card">
     <h3>🔑 Admin access</h3>
-    <p class="meta">Allowlisted emails become admins when they log in with an OTP code. They see the admin / student choice — nobody else does. Remove access anytime.</p>
+    <p class="meta">Allowlisted emails become admins when they log in with their university email — no OTP, instant mask. They see the admin / student choice — nobody else does. Remove access anytime.</p>
     <div class="row">
       <input id="admEmail" placeholder="gmail to grant admin access" style="max-width:340px">
       <button class="btn solid" id="admAdd">Grant admin access</button>

@@ -2,67 +2,83 @@ const { db, uid, now, getSetting, setSetting } = require('./db');
 
 const INTERVAL_MS = Number(process.env.BLOG_BOT_INTERVAL_MS || 1 * 60 * 60 * 1000);
 
+/* ================= THE MIDNIGHT QUILL =================
+   The site's resident ghostwriter. Posts labeled research
+   briefs about American universities — always under the
+   anonymous tag, never as a student, never fake stories. */
+
+const BOT_NAME = 'The Midnight Quill';
+
 const BRIEFS = [
   {
     section: 'safety',
-    title: 'Anti-ragging: what the UGC actually requires',
+    title: 'The Clery Act: your university publishes its crime record every year — read it',
     official: [
-      'UGC Regulations on Curbing the Menace of Ragging in Higher Educational Institutions, 2009, follow a Supreme Court judgment (8 May 2009). Text: https://www.ugc.gov.in and https://www.antiragging.in',
-      '24×7 national helpline 1800-180-5522. Email helpline@antiragging.in. Undertakings: https://www.antiragging.in',
-      'UGC public notice (July 2026) tells every HEI to keep anti-ragging bodies working, put the helpline on display, run orientation, watch hostels, protect complainants, and register an FIR where there is a prima facie case.'
+      'Every US university that gets federal aid must publish an Annual Security Report: crime on and around campus, arrests, disciplinary referrals. Find it on your school\'s site (search "<your university> annual security report").',
+      'The US Department of Education keeps a public campus safety data tool — you can compare universities side by side: https://ope.ed.gov/campussafety',
+      'Schools must keep a public daily crime log at campus police. Ask for it by name — they are required to show it within two business days.'
     ]
   },
   {
     section: 'safety',
-    title: 'If you are in distress: official mental-health lines',
+    title: 'Title IX: what your university legally owes you when you report',
     official: [
-      'Tele-MANAS (Ministry of Health): 14416 or 1800-891-4416, 24×7, multiple Indian languages. https://telemanas.mohfw.gov.in',
-      'KIRAN (Ministry of Social Justice): 1800-599-0019, 24×7.',
-      'iCall (TISS): 9152987821, trained counselling, typically Mon–Sat. These are national services, not this campus’s counselling cell — also use your college’s listed counsellor if you have one.'
+      'Title IX (20 U.S.C. §1681) bans sex discrimination at any school that takes federal money. Every university must have a named Title IX Coordinator — their email is on the school site.',
+      'When you report, the school must offer support measures (no-contact directives, schedule changes, dorm moves) whether or not you ask for an investigation.',
+      'If the school ignores a report, complaints go to the US Department of Education Office for Civil Rights: https://www2.ed.gov/about/offices/list/ocr'
+    ]
+  },
+  {
+    section: 'safety',
+    title: 'Hazing is now a federal reporting requirement — the record is public',
+    official: [
+      'The Stop Campus Hazing Act (signed Dec 2024) forces every university to publish hazing violations by organizations — including Greek life and clubs — on a public website.',
+      'Most states also have anti-hazing laws; many make hazing a crime even when the person "agreed" to it. Consent is not a defense.',
+      'If you see it happening, campus police and the student conduct office both take anonymous tips. You do not have to attach your name to a report.'
     ]
   },
   {
     section: 'hostels',
-    title: 'Hostels are a UGC vigilance zone, not a rumour mill',
+    title: 'Dorm life: the checks that actually matter at move-in',
     official: [
-      'The same 2009 UGC ragging regulations name hostels and other crowded spaces as places institutions must watch, with prompt redressal and protection of the person who complained.',
-      'Anti-ragging posters and the 1800-180-5522 number are supposed to be visible at admission desks, libraries, canteens, hostels, and common areas (UGC anti-ragging bureau notes).',
-      'Use this board to describe lighting, wardens’ hours, mess hygiene, and lock practice — not to name a roommate for sport.'
+      'Your university must publish an Annual Fire Safety Report (part of Clery): fires on campus, alarm systems, false alarms per residence hall. It tells you which dorms actually have working systems.',
+      'US Fire Administration campus fire safety guidance: most dorm fires start with cooking and candles. Know where the pull stations and extinguishers on your floor are.',
+      'RA on-duty schedules, guest policies, and quiet hours are set by the housing office — get the written policy, not the rumor version.'
     ]
   },
   {
     section: 'courses',
-    title: 'Course reviews that help the next batch',
+    title: 'FERPA: your grade records belong to you, not your parents, not the group chat',
     official: [
-      'UGC’s job is standards in teaching and examination (UGC Act, 1956). A useful review is workload, grading pattern, labs, and attendance — not a pile-on of a teacher’s looks or caste.',
-      'If an evaluation process is unfair, the first paper trail is internal: controller of examinations, grievance cell, then UGC e-Samadhan 1800-111-656.',
-      'Ask: would this note still be true if the faculty member read it? If not, rewrite it.'
+      'FERPA (20 U.S.C. §1232g) gives you the right to inspect your education records and demand correction of anything wrong. File the request with the registrar — they must respond in a reasonable time.',
+      'Schools may not share your records with outsiders without your written consent (with narrow exceptions). "We told your professor" is not how it works.',
+      'Grade appeals: every school has a written procedure — syllabus policy, department chair, then dean. Start the paper trail in writing, keep copies.'
     ]
   },
   {
     section: 'placements',
     title: 'Internship and offer talk without fake packages',
     official: [
-      'Campus placement numbers get inflated in group chats. Stick to process: test, interviews, stipend, bond, joining date. Do not invent CTC.',
-      'If a recruiter asks for money to “confirm” a seat, that is a red flag. Report it to your placement cell in writing.',
-      'Internshala / college T&P notices are not the same as a signed offer. Say which one you mean.'
+      'If a "recruiter" asks you to pay for training, equipment, or to "release" an offer, it is a scam. Real US employers never charge candidates — report it to your career center.',
+      'Compare offers in writing: base, signing bonus, benefits, start date, location. NACE (National Association of Colleges and Employers) publishes real salary trend data — https://www.naceweb.org',
+      'An internship offer that arrives without an interview, or a check you are asked to deposit, is the classic advance-fee scam. Forward it to the FTC: https://reportfraud.ftc.gov'
     ]
   },
   {
     section: 'events',
-    title: 'Campus events: paste the notice, not a rumour',
+    title: 'Campus events: verify the notice before you queue up',
     official: [
-      'Fests and talks should start from a college notice, dean’s circular, or a public Instagram post the desk can store as a URL.',
-      'This board does not scrape Instagram. Staff paste a public link on the Events tab.',
-      'If an event involves money collection, name the club and the account the college uses — not a personal UPI unless the notice says so.'
+      'Real campus events trace to a student activities office posting, a club\'s official channel, or a dean\'s circular — ask for the link, not a screenshot of a screenshot.',
+      'If an event collects money, the payment should go through the university or the club\'s registered account — never a personal Venmo / Zelle unless the official notice says so.',
+      'Big speakers and fests are usually booked through the student union. If the venue and the ticket link do not match the official calendar, ask the activities office before paying.'
     ]
   }
 ];
 
 async function fetchRedditSnippets() {
-  const url = 'https://www.reddit.com/r/college+Indian_Academia+collegeadvice/hot.json?limit=12';
+  const url = 'https://www.reddit.com/r/college+collegeadvice+ApplyingToCollege/hot.json?limit=12';
   const res = await fetch(url, {
-    headers: { 'user-agent': 'CollegeFestDeskBot/1.0 (attributed research briefs; not republished as confessions)' }
+    headers: { 'user-agent': 'MidnightQuillBot/1.0 (attributed research briefs; not republished as confessions)' }
   });
   if (!res.ok) throw new Error('Reddit ' + res.status);
   const data = await res.json();
@@ -92,23 +108,23 @@ async function pickBrief() {
 
 function buildBody(brief, reddit) {
   const lines = [];
-  lines.push('Desk research brief — written by the campus board bot. This is not a student confession and not a claim that these events happened on this campus.');
+  lines.push('A brief by The Midnight Quill 🪶 — the campus board\'s resident writer. Posted under the anonymous tag like everything else here. This is not a student confession and not a claim that these events happened at one campus.');
   lines.push('');
   lines.push('Official / trusted sources');
   for (const o of brief.official) lines.push('• ' + o);
   lines.push('');
   if (reddit.length) {
-    lines.push('What students are discussing on Reddit (attributed, not rewritten as our gossip)');
+    lines.push('What students are discussing on Reddit (attributed, never rewritten as our gossip)');
     for (const r of reddit.slice(0, 3)) {
       lines.push('• r/' + r.sub + ': ' + r.title + ' — ' + r.url);
     }
     lines.push('');
-    lines.push('Those threads are other campuses and other countries. Treat them as questions to test here, not as facts about this college.');
+    lines.push('Those threads are other campuses. Treat them as questions to test at your university, not as facts.');
   } else {
     lines.push('Reddit was unreachable this run. The official sources above still stand.');
   }
   lines.push('');
-  lines.push('If you study here: reply with what you have actually seen. Do not invent. Do not name people just to pile on.');
+  lines.push('If you study at one of these universities: reply with what you have actually seen. Do not invent. Do not name people just to pile on.');
   return lines.join('\n');
 }
 
@@ -122,7 +138,7 @@ async function publishOne(reason) {
   }
   const title = brief.title;
   const body = buildBody(brief, reddit);
-  const sourceUrl = reddit[0] ? reddit[0].url : 'https://www.ugc.gov.in';
+  const sourceUrl = reddit[0] ? reddit[0].url : 'https://www.ed.gov';
   const id = uid('post');
   await db.collection('posts').insertOne({
     _id: id,
@@ -130,6 +146,7 @@ async function publishOne(reason) {
     section: brief.section,
     title,
     body,
+    university: null,
     unique_views: 0,
     likes: 0,
     source: 'bot',
@@ -150,10 +167,11 @@ async function status() {
   const count = await db.collection('posts').countDocuments({ source: 'bot' });
   return {
     on: await isOn(),
+    name: BOT_NAME,
     last: last || null,
     interval_hours: INTERVAL_MS / 36e5,
     posts: count,
-    note: 'Publishes labeled research briefs with UGC / Tele-MANAS citations and attributed Reddit links. Not fake student stories. Not fake views.'
+    note: 'The Midnight Quill writes labeled research briefs about American universities — Clery Act records, Title IX, FERPA, hazing law — with citations and attributed Reddit links. Always under the anonymous tag. Not fake student stories. Not fake views.'
   };
 }
 
@@ -179,4 +197,4 @@ function start() {
   setInterval(() => { tick(); }, Math.min(INTERVAL_MS, 60 * 60 * 1000));
 }
 
-module.exports = { publishOne, status, setOn, start, isOn };
+module.exports = { publishOne, status, setOn, start, isOn, BOT_NAME };

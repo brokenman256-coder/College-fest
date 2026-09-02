@@ -28,7 +28,7 @@ function esc(s) {
 }
 function tagFor(p) {
   if (p.source === 'prompt') return '<span class="section-label prompt">staff prompt</span>';
-  if (p.source === 'bot') return '<span class="section-label prompt">desk research</span>';
+  if (p.source === 'bot') return '<span class="section-label quill">🪶 quill brief · anonymous</span>';
   if (p.source === 'reddit') return '<span class="section-label reddit">sourced</span>';
   return '<span class="section-label">' + esc(p.section) + '</span>';
 }
@@ -65,106 +65,91 @@ function readingTime(body) {
 function initials(handle) {
   return String(handle || '?').replace(/^@?/, '').slice(0, 1).toUpperCase();
 }
+function avatarFor(handle) {
+  const h = String(handle || '');
+  if (h === 'The Midnight Quill') return '🪶';
+  if (/^anonymous#\d+$/i.test(h) || h === 'campus_desk') return '🎭';
+  return initials(h);
+}
+function isSpyMail(email) {
+  return /(gmail|googlemail|yahoo|hotmail|outlook|live\.|msn|icloud|me\.com|aol|proton|gmx|mail\.ru|yandex|qq\.com|rediffmail|zoho)/i.test(String(email));
+}
+function isCollegeEmail(email) {
+  return /^@(?:[a-z0-9-]+\.)+(edu|edu\.in|edu\.au|edu\.pk|ac\.in|ac\.uk)$/i.test('@' + String(email).split('@').pop());
+}
+function anonLink(handle) {
+  return '#u/' + encodeURIComponent(handle);
+}
+function bylineHTML(p) {
+  const h = esc(p.handle);
+  const name = p.source === 'student'
+    ? `<a class="anon-link" href="${anonLink(p.handle)}">@${h}</a>`
+    : `<b>${h}</b>`;
+  const uni = p.university ? `<span class="dot">·</span><span class="uni-tag">${esc(p.university)}</span>` : '';
+  return `<span class="avatar">${esc(avatarFor(p.handle))}</span>${name}${uni}`;
+}
 
-/* ================= AUTH GATE (signup first) ================= */
-function renderAuth(mode) {
-  mode = mode || 'signup';
+/* ================= AUTH GATE (anonymous — email only, no OTP, no password) ================= */
+function renderAuth() {
   shell.classList.add('hidden');
   authRoot.classList.remove('hidden');
   authRoot.innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
       <a class="brand" href="#" onclick="return false">College Fest</a>
-      <h1>The <em>front page</em> of your campus.</h1>
-      <p>Anonymous handles. Real stories. Every unique read pays real money — cash out in crypto.</p>
+      <h1>Your campus. <em>Anonymous.</em> Always.</h1>
+      <p>No names. No passwords. No OTP codes. One university email — and you disappear behind a mask.</p>
       <ul class="auth-points">
-        <li>Post with a handle — email and phone stay private</li>
-        <li>Every unique read earns you money</li>
-        <li>$100 payout in USDT / USDC, no middlemen</li>
-        <li>Town hall + anonymous DMs</li>
+        <li>You appear as <b>anonymous#12</b> — everyone looks identical</li>
+        <li>Your email is <b>encrypted</b> and never shown to anyone</li>
+        <li>No tracking: no IP logs, no analytics, no fingerprinting</li>
+        <li>Follow people, like them, DM them — all anonymous</li>
       </ul>
     </div>
     <div class="auth-card">
-      ${mode === 'signup' ? `
-      <h2>Create your account</h2>
-      <p class="auth-switch">Already have one? <button class="auth-switch-btn" id="swLogin">Log in</button></p>
-      <label>College email <span class="req">*</span></label>
-      <input id="email" placeholder="you@college.ac.in">
-      <label>College name <span class="req">*</span></label>
-      <input id="college_name" placeholder="e.g. IIT Bombay">
-      <label>State <span class="req">*</span></label>
-      <input id="state" placeholder="e.g. Maharashtra">
-      <label>City / place <span class="req">*</span></label>
-      <input id="place" placeholder="e.g. Mumbai">
-      <label>Phone (optional, for OTP by SMS)</label>
-      <input id="phone" placeholder="10-digit">
-      <div class="fine">Fields marked <span class="req">*</span> are required. Students only see your handle — never your email, phone or college.</div>
-      <button class="btn accent" id="otp" style="width:100%;margin-top:10px">Send verification code</button>
-      <div id="otpBox" class="hidden" style="margin-top:12px">
-        <div id="demoNote" class="warn hidden" style="margin:0 0 10px">SMS / email delivery is not connected yet — <b>demo mode</b>: your code is filled in below. Connect Twilio or Resend to send real codes.</div>
-        <label>6-digit code</label>
-        <input id="code" inputmode="numeric" maxlength="6" placeholder="······">
-        <button class="btn solid" id="go" style="width:100%">Verify &amp; sign up</button>
+      <h2>Log in with your university email</h2>
+      <label>University email <span class="req">*</span></label>
+      <input id="email" placeholder="you@university.edu" autocomplete="off">
+      <div id="emailHint" class="fine hidden" style="margin-top:6px;color:var(--danger)"></div>
+      <div class="anon-note">
+        🔒 <b>This will stay anonymous.</b> We only check that your email is a real university
+        address (.edu / .edu.in / .ac.in) — we never show it, never share it, never track it.
+        Your posts, likes, follows and chats are visible only as your anonymous# mask.
+        Personal mailboxes (Gmail, Outlook…) are blocked to keep this student-only.
       </div>
-      <div class="fine" style="margin-top:12px">One account per student. The desk verifies IDs.</div>
-      ` : `
-      <h2>Welcome back</h2>
-      <p class="auth-switch">New here? <button class="auth-switch-btn" id="swSignup">Create an account</button></p>
-      <label>College email</label>
-      <input id="email" placeholder="you@college.ac.in">
-      <div class="fine">We send a one-time code to this email.</div>
-      <button class="btn accent" id="otp" style="width:100%;margin-top:10px">Send code</button>
-      <div id="otpBox" class="hidden" style="margin-top:12px">
-        <div id="demoNote" class="warn hidden" style="margin:0 0 10px">SMS / email delivery is not connected yet — <b>demo mode</b>: your code is filled in below. Connect Twilio or Resend to send real codes.</div>
-        <label>6-digit code</label>
-        <input id="code" inputmode="numeric" maxlength="6" placeholder="······">
-        <button class="btn solid" id="go" style="width:100%">Verify &amp; log in</button>
-      </div>
-      <div class="fine" style="margin-top:12px">Lost access? Request the code again.</div>
-      `}
+      <button class="btn accent" id="go" style="width:100%;margin-top:12px">Enter anonymously →</button>
+      <div class="fine" style="margin-top:12px">No verification email. No password to forget. New email? You get a fresh mask instantly.</div>
     </div>
   </div>`;
   const req = authRoot.querySelectorAll('.req');
   req.forEach((el) => { el.style.color = 'var(--accent)'; el.style.fontWeight = '700'; });
 
-  if (mode === 'signup') {
-    document.getElementById('swLogin').onclick = () => renderAuth('login');
-  } else {
-    document.getElementById('swSignup').onclick = () => renderAuth('signup');
-  }
-  document.getElementById('otp').onclick = sendOtp;
-  document.getElementById('go').onclick = verifyOtp;
+  const inp = document.getElementById('email');
+  const hint = document.getElementById('emailHint');
+  inp.addEventListener('input', () => {
+    const v = inp.value.trim().toLowerCase();
+    hint.classList.add('hidden');
+    if (v.includes('@') && isSpyMail(v)) {
+      hint.textContent = 'That is a personal mailbox (spy mail). Use your university .edu email.';
+      hint.classList.remove('hidden');
+    } else if (v.includes('@') && v.split('@')[1] && !isCollegeEmail(v)) {
+      hint.textContent = 'Hmm — that does not look like a university email (.edu / .edu.in / .ac.in).';
+      hint.classList.remove('hidden');
+    }
+  });
 
-  function signupBody() {
-    return {
-      email: document.getElementById('email').value,
-      phone: (document.getElementById('phone') || {}).value || '',
-      college_name: (document.getElementById('college_name') || {}).value || '',
-      state: (document.getElementById('state') || {}).value || '',
-      place: (document.getElementById('place') || {}).value || ''
-    };
-  }
-  async function sendOtp() {
+  async function login() {
+    const email = inp.value.trim().toLowerCase();
+    if (!email) return toast('Enter your university email.');
+    if (isSpyMail(email)) return toast('No personal mail — use your university .edu email.');
     try {
-      const r = await api('/api/auth/request-otp', { method: 'POST', body: signupBody() });
-      document.getElementById('otpBox').classList.remove('hidden');
-      document.getElementById('otpBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      if (r.via === 'demo' && r.dev_otp) {
-        document.getElementById('demoNote').classList.remove('hidden');
-        toast('Demo code: ' + r.dev_otp);
-        document.getElementById('code').value = r.dev_otp;
-      } else {
-        toast(r.via === 'sms' ? 'Code sent — check your phone' : 'Code sent — check your email');
-      }
-    } catch (e) { toast(e.message); }
-  }
-  async function verifyOtp() {
-    try {
-      await api('/api/auth/verify-otp', { method: 'POST', body: { ...signupBody(), code: document.getElementById('code').value } });
-      toast('Welcome in!');
+      const r = await api('/api/auth/login', { method: 'POST', body: { email } });
+      toast(r.created ? 'Mask on: @' + r.me.handle : 'Welcome back, @' + r.me.handle);
       boot();
     } catch (e) { toast(e.message); }
   }
+  document.getElementById('go').onclick = login;
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
 }
 
 /* ================= MAIN APP ================= */
@@ -284,6 +269,7 @@ function route() {
   const hsh = (location.hash || '#feed').slice(1);
   chatViewOpen = pageName() === 'chat';
   if (hsh.startsWith('post/')) return showPost(hsh.slice(5));
+  if (hsh.startsWith('u/')) return showProfile(decodeURIComponent(hsh.slice(2)));
   const page = pageName();
   if (page === 'write') return showWrite();
   if (page === 'search') return showSearch();
@@ -320,8 +306,7 @@ async function showFeed() {
       ${tagFor(p)}
       <h2><a href="#post/${esc(p.id)}">${esc(p.title)}</a></h2>
       <div class="byline">
-        <span class="avatar">${esc(initials(p.handle))}</span>
-        <b>@${esc(p.handle)}</b><span class="dot">·</span>
+        ${bylineHTML(p)}<span class="dot">·</span>
         <span>${p.created_at.slice(0, 10)}</span><span class="dot">·</span>
         <span>${readingTime(p.body)}</span><span class="dot">·</span>
         <span class="mono">${p.unique_views} reads</span><span class="dot">·</span>
@@ -333,12 +318,12 @@ async function showFeed() {
 
 async function showPost(id) {
   const { post: p } = await api('/api/posts/' + id);
+  const mine = META.me && p.handle === META.me.handle;
   app.innerHTML = `<article class="card post-full">
     ${tagFor(p)}
     <h1>${esc(p.title)}</h1>
     <div class="byline" style="margin:10px 0 4px">
-      <span class="avatar">${esc(initials(p.handle))}</span>
-      <b>@${esc(p.handle)}</b><span class="dot">·</span>
+      ${bylineHTML(p)}<span class="dot">·</span>
       <span class="mono">${esc(p.created_at)}</span><span class="dot">·</span>
       <span class="mono">${p.unique_views} unique reads</span><span class="dot">·</span>
       <span>${readingTime(p.body)}</span>
@@ -347,7 +332,7 @@ async function showPost(id) {
     ${p.source_url ? `<p class="meta">Source: <a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.source_url)}</a></p>` : ''}
     <div class="post-actions">
       <button class="btn ${p.liked_by_me ? 'accent liked' : ''}" id="like">${p.liked_by_me ? '♥' : '♡'} ${p.likes || 0}</button>
-      <button class="btn" id="fol">Follow @${esc(p.handle)}</button>
+      ${p.source === 'student' && !mine ? `<button class="btn" id="fol">@ Follow ${esc(p.handle)}</button><button class="btn" id="dm">💬 DM</button>` : ''}
       <button class="btn mini" id="rep">Report</button>
       <span style="flex:1"></span>
       <button class="btn mini" id="shW">WhatsApp</button>
@@ -373,10 +358,16 @@ async function showPost(id) {
     try { await navigator.clipboard.writeText(shareUrl); toast('Link copied'); }
     catch (e) { toast(shareUrl); }
   };
-  document.getElementById('fol').onclick = async () => {
-    try { const r = await api('/api/follow/' + encodeURIComponent(p.handle), { method: 'POST', body: {} }); toast('Following. Followers: ' + r.followers); }
-    catch (e) { toast(e.message); }
-  };
+  if (document.getElementById('fol')) {
+    document.getElementById('fol').onclick = async () => {
+      try {
+        const r = await api('/api/follow/' + encodeURIComponent(p.handle), { method: 'POST', body: {} });
+        document.getElementById('fol').textContent = (r.following ? '✓ Following ' : '@ Follow ') + p.handle;
+        toast(r.following ? 'Following anonymously' : 'Unfollowed');
+      } catch (e) { toast(e.message); }
+    };
+    document.getElementById('dm').onclick = () => { location.hash = 'chat'; setTimeout(() => openConversation(p.handle), 400); };
+  }
   document.getElementById('rep').onclick = async () => {
     const reason = prompt('Why report this?');
     if (!reason) return;
@@ -392,18 +383,22 @@ function showWrite() {
   }
   app.innerHTML = `<div class="card" style="max-width:720px;margin:26px auto">
     <h3 style="font-size:26px">Write a story</h3>
-    <p class="meta">Readers see your handle only — never your email, phone or college. The desk can still moderate.</p>
+    <p class="meta">Published as <b>🎭 @${esc(META.me.handle)}</b> — readers never see your email. Only your university is attached so others can search it.</p>
     <label>Section</label>
     <select id="section">${META.sections.map((s) => `<option value="${s.id}">${s.name}</option>`).join('')}</select>
+    <label>University name <span class="req">*</span></label>
+    <input id="university" value="${esc(META.me.college_name || '')}" placeholder="e.g. MIT, NYU, University of Michigan" maxlength="120">
+    <div class="fine" style="margin-bottom:12px">Readers will find this story when they search incidents at this university.</div>
     <label>Title</label><input id="title" maxlength="140" placeholder="Give it a real headline">
     <label>Story</label>
-    <textarea id="body" rows="10" placeholder="Stick to what you saw. Do not invent. Do not name people just to pile on."></textarea>
+    <textarea id="body" rows="10" placeholder="Stick to what you saw at your university. Do not invent. Do not name people just to pile on."></textarea>
     <button class="btn accent" id="pub">Publish story</button>
   </div>`;
   document.getElementById('pub').onclick = async () => {
     try {
       const r = await api('/api/posts', { method: 'POST', body: {
         section: document.getElementById('section').value,
+        university: document.getElementById('university').value,
         title: document.getElementById('title').value,
         body: document.getElementById('body').value
       }});
@@ -429,7 +424,7 @@ function showChat() {
         </div>
         <p class="meta">Share this handle to receive anonymous messages. It reveals nothing about you.</p>
         <h3 style="font-size:16px">Start a direct chat</h3>
-        <input id="newChat" placeholder="ch_xxxxxxxxxx">
+        <input id="newChat" placeholder="anonymous#11 or ch_xxxxxxxxxx">
         <button class="btn accent" id="startChat">Open chat</button>
       </div>
       <div class="card">
@@ -446,7 +441,7 @@ function showChat() {
   };
   document.getElementById('startChat').onclick = () => {
     const v = document.getElementById('newChat').value.trim();
-    if (!/^ch_[0-9a-f]{10}$/.test(v)) return toast('Handles look like ch_xxxxxxxxxx');
+    if (!/^anonymous#\d+$/i.test(v) && !/^ch_[0-9a-f]{10}$/.test(v)) return toast('Use a handle like anonymous#11 or ch_xxxxxxxxxx');
     openConversation(v);
   };
   renderContacts();
@@ -619,21 +614,95 @@ async function openConversation(handle) {
   };
 }
 
-/* ---------------- search / events / sourced ---------------- */
-function showSearch() {
-  app.innerHTML = `<div class="card" style="max-width:640px;margin:26px auto">
-    <h3>Search people and stories</h3>
-    <input id="q" placeholder="handle or words">
+/* ---------------- search: incidents at any university ---------------- */
+async function showSearch() {
+  let unis = [];
+  try { unis = (await api('/api/universities')).universities; } catch (e) {}
+  app.innerHTML = `<div class="card" style="max-width:680px;margin:26px auto">
+    <h3>Search incidents &amp; records by university</h3>
+    <p class="meta">Search what really happened at any university — safety records, dorm life, courses, internships. Everything stays anonymous.</p>
+    <label>University</label>
+    <input id="uni" list="uniList" placeholder="e.g. MIT, NYU — or pick from the list">
+    <datalist id="uniList">${unis.map((x) => `<option value="${esc(x.name)}">${x.stories} stories</option>`).join('')}</datalist>
+    <label>Keyword</label>
+    <input id="q" placeholder="hazing, fire alarm, professor, internship…">
+    ${unis.length ? `<div class="row" style="flex-wrap:wrap;margin:10px 0 0">${unis.slice(0, 8).map((x) => `<button class="btn mini uni-chip" data-u="${esc(x.name)}">${esc(x.name)} <span class="mono">${x.stories}</span></button>`).join('')}</div>` : ''}
     <div id="out"></div>
   </div>`;
+  app.querySelectorAll('.uni-chip').forEach((b) => {
+    b.onclick = () => { document.getElementById('uni').value = b.dataset.u; run(); };
+  });
   const run = async () => {
-    const q = document.getElementById('q').value;
-    const d = await api('/api/search?q=' + encodeURIComponent(q));
+    const q = document.getElementById('q').value.trim();
+    const uni = document.getElementById('uni').value.trim();
+    if (q.length < 2 && uni.length < 2) { document.getElementById('out').innerHTML = ''; return; }
+    const d = await api('/api/search?q=' + encodeURIComponent(q) + '&university=' + encodeURIComponent(uni));
     document.getElementById('out').innerHTML =
-      '<h3>People</h3>' + (d.people.map((p) => `<div class="card">@${esc(p.handle)} · ${p.follower_count} followers ${p.verified ? '· verified' : ''}</div>`).join('') || '<p class="meta">None</p>') +
-      '<h3>Stories</h3>' + (d.posts.map((p) => `<div class="card"><a href="#post/${esc(p.id)}">${esc(p.title)}</a></div>`).join('') || '<p class="meta">None</p>');
+      '<h3>People</h3>' + (d.people.map((p) => `<div class="card person-row"><a href="${anonLink(p.handle)}">🎭 @${esc(p.handle)}</a> · ${p.follower_count} followers · ♥ ${p.likes_count || 0}${p.college_name ? ' · ' + esc(p.college_name) : ''}</div>`).join('') || '<p class="meta">None</p>') +
+      '<h3>Stories</h3>' + (d.posts.map((p) => `<div class="card"><a href="#post/${esc(p.id)}">${esc(p.title)}</a><div class="meta">${esc(p.university || 'unknown university')} · ${p.unique_views} reads · ${p.created_at.slice(0, 10)}</div></div>`).join('') || '<p class="meta">None</p>');
   };
   document.getElementById('q').oninput = debounce(run, 250);
+  document.getElementById('uni').oninput = debounce(run, 250);
+}
+
+/* ---------------- user profile: follow, like, chat ---------------- */
+async function showProfile(handle) {
+  if (!/^anonymous#\d+$/i.test(handle) && handle !== 'campus_desk' && !/^ch_[0-9a-f]{10}$/.test(handle)) {
+    app.innerHTML = '<div class="card">No such user.</div>';
+    return;
+  }
+  let d;
+  try { d = await api('/api/users/' + encodeURIComponent(handle)); }
+  catch (e) { app.innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
+  const u2 = d.user;
+  const mine = META.me && u2.handle === META.me.handle;
+  app.innerHTML = `<div style="max-width:680px;margin:26px auto">
+    <div class="card profile-head">
+      <span class="avatar big">🎭</span>
+      <div>
+        <h3 style="font-size:26px;margin:0">@${esc(u2.handle)}</h3>
+        <div class="meta">${esc(u2.college_name || 'university unknown')} · joined ${esc((u2.created_at || '').slice(0, 10))}</div>
+        <div class="row" style="margin-top:10px">
+          <span class="mono"><b>${u2.follower_count}</b> followers</span><span class="dot">·</span>
+          <span class="mono"><b>${u2.likes_count || 0}</b> likes</span><span class="dot">·</span>
+          <span class="mono"><b>${d.posts.length}</b> stories</span>
+        </div>
+        ${!mine ? `<div class="row" style="margin-top:14px">
+          <button class="btn ${u2.followed_by_me ? '' : 'accent'}" id="pfFollow">${u2.followed_by_me ? '✓ Following' : '@ Follow'}</button>
+          <button class="btn ${u2.liked_by_me ? 'accent' : ''}" id="pfLike">${u2.liked_by_me ? '♥ Liked' : '♡ Like'} (${u2.likes_count || 0})</button>
+          <button class="btn" id="pfChat">💬 Chat</button>
+        </div>` : '<div class="meta" style="margin-top:10px">This is you. Others see only this mask — nothing else.</div>'}
+      </div>
+    </div>
+    <h3 style="margin:20px 0 8px">Stories by @${esc(u2.handle)}</h3>
+    ${d.posts.map((p) => `
+      <article class="card post-card">
+        ${tagFor(p)}
+        <h2><a href="#post/${esc(p.id)}">${esc(p.title)}</a></h2>
+        <div class="byline">${bylineHTML(p)}<span class="dot">·</span><span>${p.created_at.slice(0, 10)}</span><span class="dot">·</span><span class="mono">${p.unique_views} reads</span><span class="dot">·</span><span class="mono">♥ ${p.likes || 0}</span></div>
+        <p class="excerpt">${esc(p.body.slice(0, 180))}${p.body.length > 180 ? '…' : ''}</p>
+      </article>`).join('') || '<p class="meta">No stories yet.</p>'}
+  </div>`;
+  if (!mine) {
+    document.getElementById('pfFollow').onclick = async () => {
+      try {
+        const r = await api('/api/follow/' + encodeURIComponent(u2.handle), { method: 'POST', body: {} });
+        toast(r.following ? 'Following anonymously' : 'Unfollowed');
+        showProfile(handle);
+      } catch (e) { toast(e.message); }
+    };
+    document.getElementById('pfLike').onclick = async () => {
+      try {
+        const r = await api('/api/users/' + encodeURIComponent(u2.handle) + '/like', { method: 'POST', body: {} });
+        toast(r.liked ? 'Liked ♥' : 'Like removed');
+        showProfile(handle);
+      } catch (e) { toast(e.message); }
+    };
+    document.getElementById('pfChat').onclick = () => {
+      location.hash = 'chat';
+      setTimeout(() => openConversation(u2.chat_handle || u2.handle), 400);
+    };
+  }
 }
 
 async function showEvents() {
@@ -722,8 +791,9 @@ async function showMe() {
   const d = await api('/api/me');
   app.innerHTML = `<div style="max-width:640px;margin:26px auto">
     <div class="card">
-      <h3 style="font-size:26px">@${esc(d.me.handle)}</h3>
-      <div class="meta">Status: ${esc(d.me.status)} · followers ${d.me.follower_count}${d.me.college_name ? ' · ' + esc(d.me.college_name) + (d.me.place ? ', ' + esc(d.me.place) : '') + (d.me.state ? ', ' + esc(d.me.state) : '') : ''}</div>
+      <h3 style="font-size:26px">🎭 @${esc(d.me.handle)}</h3>
+      <div class="meta">This is your mask — it's all anyone sees. ${d.me.college_name ? 'University: ' + esc(d.me.college_name) + ' · ' : ''}Status: ${esc(d.me.status)} · followers ${d.me.follower_count} · likes ${d.me.likes_count || 0}</div>
+      <div class="anon-note" style="margin-top:10px">🔒 Your email is stored encrypted and is never shown to anyone. We keep no IP logs. Your stories, likes, follows and chats carry only this mask.</div>
       <div class="row" style="margin-top:12px">
         <code class="handle-chip">chat: ${esc(META.chat_handle || '—')}</code>
         <button class="btn mini" id="copyChat">copy</button>

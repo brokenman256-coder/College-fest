@@ -6,8 +6,6 @@ const { db, uid, now, SECTIONS, connectDB, getSetting, setSetting } = require('.
 const blogBot = require('./blogBot');
 const campaignBot = require('./campaignBot');
 const chatBot = require('./chatBot');
-const mailer = require('./mailer');
-const sms = require('./sms');
 require('dotenv').config();
 
 const PORT = Number(process.env.PORT || 8787);
@@ -21,22 +19,74 @@ const MIN_PAYOUT_USD = 100; // withdrawal milestone — smaller requests are not
 
 let ADMIN = null;
 
+/* ---------- email privacy: emails are encrypted at rest and stored as a
+   hash for login lookup. A database dump alone cannot reveal who anyone is. ---------- */
+const EMAIL_KEY = crypto.createHash('sha256').update('email-at-rest:' + (process.env.SESSION_SECRET || 'collegefest')).digest();
+function encryptEmail(email) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', EMAIL_KEY, iv);
+  const enc = Buffer.concat([c.update(String(email), 'utf8'), c.final()]);
+  return iv.toString('base64') + ':' + c.getAuthTag().toString('base64') + ':' + enc.toString('base64');
+}
+function decryptEmail(payload) {
+  try {
+    const [ivB64, tagB64, encB64] = String(payload).split(':');
+    const d = crypto.createDecipheriv('aes-256-gcm', EMAIL_KEY, Buffer.from(ivB64, 'base64'));
+    d.setAuthTag(Buffer.from(tagB64, 'base64'));
+    return Buffer.concat([d.update(Buffer.from(encB64, 'base64')), d.final()]).toString('utf8');
+  } catch (e) { return null; }
+}
+function emailHash(email) {
+  return hash('em:' + String(email).trim().toLowerCase());
+}
+
+/* university identity derived from the email domain — never stored against a name */
+function universityFromEmail(email) {
+  const dom = String(email).split('@')[1] || '';
+  const core = dom.split('.').slice(0, -1).join(' ').trim();
+  return core ? core.toUpperCase() : null;
+}
+
+/* "spy mail" — personal mailboxes are always rejected */
+const SPY_MAIL = /(gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|live\.|msn|icloud|me\.com|mac\.com|aol|proton|tutanota|gmx|mail\.ru|yandex|qq\.com|163\.com|126\.com|rediffmail|zoho)/i;
+function isSpyMail(email) { return SPY_MAIL.test(String(email)); }
+function isCampusEmail(email) {
+  if (ALLOW_ANY_EMAIL) return /.+@.+\..+/.test(email) && !isSpyMail(email);
+  return /@(?:[a-z0-9-]+\.)+(edu|edu\.in|edu\.au|edu\.pk|ac\.in|ac\.uk)$/i.test(String(email)) && !isSpyMail(email);
+}
+
+/* everyone looks the same: anonymous#11, anonymous#12, ... */
+async function nextAnonHandle() {
+  const r = await db.collection('settings').findOneAndUpdate(
+    { _id: 'anon_seq' },
+    { $inc: { value: 1 } },
+    { upsert: true, returnDocument: 'after' }
+  );
+  const raw = r && r.value;
+  const n = raw && typeof raw === 'object' ? Number(raw.value) || 1 : Number(raw) || 1;
+  return 'anonymous#' + n;
+}
+
 async function ensureAdmin() {
   const email = (process.env.ADMIN_EMAIL || 'admin@campus.local').toLowerCase();
   let admin = await db.collection('users').findOne({ role: 'admin' });
   if (admin) return admin;
-  const handle = 'desk_' + crypto.randomBytes(3).toString('hex');
   const id = uid('usr');
   await db.collection('users').insertOne({
     _id: id,
-    email,
+    email_enc: encryptEmail(email),
+    email_hash: emailHash(email),
     phone: null,
     college_id: null,
-    handle,
+    college_name: null,
+    state: null,
+    place: null,
+    handle: 'desk',
     role: 'admin',
     status: 'active',
     verified: true,
     follower_count: 0,
+    likes_count: 0,
     wallet: null,
     created_at: now()
   });
@@ -82,6 +132,9 @@ function send(res, code, body, extra = {}) {
     'content-type': typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
+    'x-frame-options': 'DENY',
+    'permissions-policy': 'geolocation=(), camera=(), microphone=(), interest-cohort=()',
+    'cross-origin-opener-policy': 'same-origin',
     'cache-control': 'no-store',
     ...extra
   };
@@ -106,9 +159,9 @@ async function currentUser(req) {
 }
 
 function postHandle(p) {
-  if (p.source === 'student') return p.handle || 'student';
+  if (p.source === 'student') return p.handle || 'anonymous';
   if (p.source === 'prompt') return 'campus_desk';
-  if (p.source === 'bot') return 'desk_bot';
+  if (p.source === 'bot') return blogBot.BOT_NAME;
   return 'sourced';
 }
 
@@ -121,9 +174,8 @@ function publicUser(u) {
     status: u.status,
     verified: !!u.verified,
     follower_count: u.follower_count || 0,
+    likes_count: u.likes_count || 0,
     college_name: u.college_name || null,
-    state: u.state || null,
-    place: u.place || null,
     created_at: u.created_at
   };
 }
@@ -132,8 +184,7 @@ function adminUser(u) {
   if (!u) return null;
   return {
     ...publicUser(u),
-    email: u.email,
-    phone: u.phone,
+    email: u.email_enc ? decryptEmail(u.email_enc) : (u.email || null),
     college_id: u.college_id,
     wallet: u.wallet
   };
@@ -145,6 +196,7 @@ function pubPost(p) {
     section: p.section,
     title: p.title,
     body: p.body,
+    university: p.university || null,
     unique_views: p.unique_views || 0,
     likes: p.likes || 0,
     source: p.source,
@@ -153,11 +205,6 @@ function pubPost(p) {
     created_at: p.created_at,
     hidden: !!p.hidden
   };
-}
-
-function isCampusEmail(email) {
-  if (ALLOW_ANY_EMAIL) return /.+@.+\..+/.test(email);
-  return /@.+(\.edu|\.ac\.in|\.edu\.in)$/i.test(email);
 }
 
 async function uniqueViewsOf(userId) {
@@ -270,7 +317,14 @@ function serveStatic(req, res) {
   const file = path.normalize(path.join(PUBLIC, p));
   if (!file.startsWith(PUBLIC)) return send(res, 403, { error: 'no' });
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return false;
-  res.writeHead(200, { 'content-type': mime(file), 'x-content-type-options': 'nosniff' });
+  res.writeHead(200, {
+    'content-type': mime(file),
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'referrer-policy': 'no-referrer',
+    'permissions-policy': 'geolocation=(), camera=(), microphone=(), interest-cohort=()',
+    'cross-origin-opener-policy': 'same-origin'
+  });
   fs.createReadStream(file).pipe(res);
   return true;
 }
@@ -301,117 +355,42 @@ async function handleApi(req, res, url) {
     });
   }
 
-  if (method === 'POST' && pathname === '/api/auth/request-otp') {
+  if (method === 'POST' && pathname === '/api/auth/login') {
     const body = await readBody(req);
     const email = String(body.email || '').trim().toLowerCase();
-    const phone = String(body.phone || '').replace(/\D/g, '');
-    const college_id = String(body.college_id || '').trim();
-    const college_name = String(body.college_name || '').trim();
-    const state = String(body.state || '').trim();
-    const place = String(body.place || '').trim();
-    const identifier = email || phone;
-    if (!identifier) return send(res, 400, { error: 'Use a college email or a phone number.' });
-    if (email && !isCampusEmail(email)) return send(res, 400, { error: 'Use a college email (.edu / .ac.in / .edu.in).' });
-    if (phone && (phone.length < 10 || phone.length > 15)) return send(res, 400, { error: 'Bad phone number.' });
-    if (!rateLimit('otp:' + identifier, 5, 15 * 60 * 1000)) return send(res, 429, { error: 'Too many OTP requests. Wait 15 minutes.' });
-    const existing = email
-      ? await db.collection('users').findOne({ email })
-      : await db.collection('users').findOne({ phone });
-    if (existing && existing.status === 'banned') return send(res, 403, { error: 'This account is banned.' });
-    // college name / state / place are mandatory for NEW signups only
-    if (!existing) {
-      if (!college_name) return send(res, 400, { error: 'College name is required.' });
-      if (!state) return send(res, 400, { error: 'State is required.' });
-      if (!place) return send(res, 400, { error: 'City / place is required.' });
-    }
-    const code = String(crypto.randomInt(100000, 999999));
-    await db.collection('otps').updateOne(
-      { identifier },
-      { $set: { identifier, hash: hash(code), expires_at: Date.now() + 10 * 60 * 1000 } },
-      { upsert: true }
-    );
-    if (!existing) {
-      // stable pseudonym: adjective.noun.number — nothing links it to the real account
-      const ADJ = ['silent', 'midnight', 'quiet', 'lone', 'hidden', 'wandering', 'shadow', 'echo', 'amber', 'cosmic', 'velvet', 'iron', 'paper', 'monsoon', 'northern'];
-      const NOUN = ['owl', 'river', 'fox', 'pine', 'comet', 'raven', 'peak', 'lantern', 'wolf', 'sparrow', 'ember', 'cloud', 'heron', 'willow', 'quill'];
-      let handle = '';
-      for (let t = 0; t < 6; t++) {
-        const cand = ADJ[Math.floor(Math.random() * ADJ.length)] + '.' + NOUN[Math.floor(Math.random() * NOUN.length)] + '.' + Math.floor(10 + Math.random() * 90);
-        if (!(await db.collection('users').findOne({ handle: cand }))) { handle = cand; break; }
-      }
-      if (!handle) handle = 'anon_' + crypto.randomBytes(4).toString('hex');
-      const adminEmail = email && (await db.collection('admin_allowlist').findOne({ email }));
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter your university email.' });
+    if (isSpyMail(email)) return send(res, 400, { error: 'That is a personal mailbox (Gmail / Outlook etc.) — not allowed here. Use your university email so everyone stays anonymous.' });
+    if (!isCampusEmail(email)) return send(res, 400, { error: 'Use your university email — it should end in .edu (or .edu.in / .ac.in).' });
+    if (!rateLimit('login:' + emailHash(email), 15, 10 * 60 * 1000)) return send(res, 429, { error: 'Too many attempts. Wait a few minutes.' });
+    const ehash = emailHash(email);
+    let user = await db.collection('users').findOne({ email_hash: ehash });
+    let created = false;
+    if (user && user.status === 'banned') return send(res, 403, { error: 'This account is banned.' });
+    if (!user) {
+      const handle = await nextAnonHandle();
+      const allow = await db.collection('admin_allowlist').findOne({ email });
+      const id = uid('usr');
       await db.collection('users').insertOne({
-        _id: uid('usr'),
-        email: email || null,
-        phone: phone || null,
-        college_id: college_id || null,
-        college_name,
-        state,
-        place,
+        _id: id,
+        email_enc: encryptEmail(email),
+        email_hash: ehash,
+        phone: null,
+        college_id: null,
+        college_name: universityFromEmail(email),
+        state: null,
+        place: null,
         handle,
-        role: adminEmail ? 'admin' : 'student',
+        role: allow ? 'admin' : 'student',
         status: 'active',
         verified: false,
         follower_count: 0,
+        likes_count: 0,
         wallet: null,
         created_at: now()
       });
-    } else {
-      const patch = {};
-      if (college_id && !existing.college_id) patch.college_id = college_id;
-      if (college_name && !existing.college_name) patch.college_name = college_name;
-      if (state && !existing.state) patch.state = state;
-      if (place && !existing.place) patch.place = place;
-      if (Object.keys(patch).length) await db.collection('users').updateOne({ _id: existing._id }, { $set: patch });
+      user = await db.collection('users').findOne({ _id: id });
+      created = true;
     }
-    const masked = email ? email.replace(/(^.).*(@.*$)/, '$1***$2') : 'phone ***' + phone.slice(-4);
-    const payload = { ok: true, sent_to: masked };
-    if (email && mailer.isConfigured()) {
-      const delivery = await mailer.sendOTPEmail(email, code);
-      if (delivery.sent) {
-        payload.via = 'email';
-        return send(res, 200, payload); // real email sent — never echo the code
-      }
-      // email provider failed or missing → fall through to demo mode
-    }
-    if (phone && sms.isConfigured()) {
-      const delivery = await sms.sendOTPSms(phone, code);
-      if (delivery.sent) {
-        payload.via = 'sms';
-        return send(res, 200, payload); // real SMS sent — never echo the code
-      }
-      // SMS provider failed or missing → fall through to demo mode
-    }
-    if (ALLOW_ANY_EMAIL) payload.dev_otp = code;
-    // no delivery provider connected (Twilio / Resend)? never lock people out:
-    // fall back to demo mode and show the code on screen.
-    if (!payload.via) {
-      const providerMissing = (email && !mailer.isConfigured()) || (phone && !sms.isConfigured());
-      if (providerMissing) {
-        payload.dev_otp = code;
-        payload.via = 'demo';
-      }
-    }
-    return send(res, 200, payload);
-  }
-
-  if (method === 'POST' && pathname === '/api/auth/verify-otp') {
-    const body = await readBody(req);
-    const email = String(body.email || '').trim().toLowerCase();
-    const phone = String(body.phone || '').replace(/\D/g, '');
-    const identifier = email || phone;
-    const code = String(body.code || '').trim();
-    const row = await db.collection('otps').findOne({ identifier });
-    if (!row || row.expires_at < Date.now() || !timingSafe(row.hash, hash(code))) {
-      return send(res, 400, { error: 'Invalid or expired OTP.' });
-    }
-    await db.collection('otps').deleteOne({ identifier });
-    const user = email
-      ? await db.collection('users').findOne({ email })
-      : await db.collection('users').findOne({ phone });
-    if (!user) return send(res, 400, { error: 'No account.' });
-    if (user.status === 'banned') return send(res, 403, { error: 'This account is banned.' });
     const token = crypto.randomBytes(24).toString('hex');
     await db.collection('sessions').insertOne({
       token,
@@ -419,14 +398,15 @@ async function handleApi(req, res, url) {
       expires_at: Date.now() + 14 * 24 * 60 * 60 * 1000
     });
     setSession(res, token);
-    return send(res, 200, { ok: true, me: publicUser(user) });
+    return send(res, 200, { ok: true, created, me: publicUser(user) });
   }
 
   if (method === 'POST' && pathname === '/api/auth/admin-login') {
     const body = await readBody(req);
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
-    if (!ADMIN || email !== String(ADMIN.email).toLowerCase() || !timingSafe(hash(password), hash(process.env.ADMIN_PASSWORD || ''))) {
+    const adminEmail = String(process.env.ADMIN_EMAIL || '').toLowerCase();
+    if (!ADMIN || email !== adminEmail || !timingSafe(hash(password), hash(process.env.ADMIN_PASSWORD || ''))) {
       return send(res, 401, { error: 'Bad admin login.' });
     }
     const token = crypto.randomBytes(24).toString('hex');
@@ -436,7 +416,7 @@ async function handleApi(req, res, url) {
       expires_at: Date.now() + 14 * 24 * 60 * 60 * 1000
     });
     setSession(res, token);
-    await audit(ADMIN._id, 'admin_login', ADMIN._id, req.socket.remoteAddress || '');
+    await audit(ADMIN._id, 'admin_login', ADMIN._id, ''); // no IPs stored — tracking-free by design
     return send(res, 200, { ok: true, me: adminUser(ADMIN) });
   }
 
@@ -479,6 +459,11 @@ async function handleApi(req, res, url) {
     const id = pathname.split('/')[3];
     const p = await db.collection('posts').findOne({ _id: id });
     if (!p || (p.hidden && (!u || u.role !== 'admin'))) return send(res, 404, { error: 'Not found.' });
+    // resolve the author's current anonymous handle onto the post
+    if (p.user_id) {
+      const au = await db.collection('users').findOne({ _id: p.user_id }, { projection: { handle: 1, college_name: 1 } });
+      if (au) { p.handle = au.handle; if (!p.university) p.university = au.college_name || null; }
+    }
     const viewerKey = u ? 'u:' + u._id : 'ip:' + hash((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '') + (req.headers['user-agent'] || ''));
     const ins = await db.collection('post_views').updateOne(
       { post_id: id, viewer_key: viewerKey },
@@ -527,6 +512,12 @@ async function handleApi(req, res, url) {
     const title = String(body.title || '').trim().slice(0, 140);
     const text = String(body.body || '').trim().slice(0, 8000);
     if (title.length < 8 || text.length < 40) return send(res, 400, { error: 'Write a real post (title 8+, body 40+).' });
+    // university name is asked at write time — pre-filled from the email domain, correctable
+    const university = String(body.university || '').trim().slice(0, 120) || u.college_name || null;
+    if (university && university !== u.college_name) {
+      await db.collection('users').updateOne({ _id: u._id }, { $set: { college_name: university } });
+      u.college_name = university;
+    }
     const section = SECTIONS.some((s) => s.id === body.section) ? body.section : curatorSection(title, text);
     const flags = curatorFlags(title, text);
     const id = uid('post');
@@ -536,6 +527,7 @@ async function handleApi(req, res, url) {
       section,
       title,
       body: text,
+      university,
       unique_views: 0,
       likes: 0,
       source: 'student',
@@ -567,34 +559,101 @@ async function handleApi(req, res, url) {
     const handle = decodeURIComponent(pathname.split('/')[3] || '');
     const other = await db.collection('users').findOne({ handle });
     if (!other || other._id === u._id) return send(res, 400, { error: 'Cannot follow.' });
-    const ins = await db.collection('follows').updateOne(
-      { follower_id: u._id, followee_id: other._id },
-      { $setOnInsert: { follower_id: u._id, followee_id: other._id, created_at: now() } },
-      { upsert: true }
-    );
-    if (ins.upsertedCount) {
+    const key = { follower_id: u._id, followee_id: other._id };
+    const existing = await db.collection('follows').findOne(key);
+    let following;
+    if (existing) {
+      await db.collection('follows').deleteOne(key);
+      await db.collection('users').updateOne({ _id: other._id }, { $inc: { follower_count: -1 } });
+      other.follower_count = Math.max(0, (other.follower_count || 0) - 1);
+      following = false;
+    } else {
+      await db.collection('follows').updateOne(key, { $setOnInsert: { ...key, created_at: now() } }, { upsert: true });
       await db.collection('users').updateOne({ _id: other._id }, { $inc: { follower_count: 1 } });
- other.follower_count = (other.follower_count || 0) + 1;
+      other.follower_count = (other.follower_count || 0) + 1;
+      following = true;
     }
-    return send(res, 200, { ok: true, followers: other.follower_count });
+    return send(res, 200, { ok: true, followers: other.follower_count, following });
   }
 
   if (method === 'GET' && pathname === '/api/search') {
     if (!u) return send(res, 401, { error: 'Login first.' });
     const q = String(url.searchParams.get('q') || '').trim();
-    if (q.length < 2) return send(res, 200, { people: [], posts: [] });
-    const people = await db.collection('users').find(
-      { role: 'student', status: { $ne: 'banned' }, handle: rx(q) },
-      { projection: { handle: 1, verified: 1, follower_count: 1, created_at: 1 } }
-    ).limit(20).toArray();
+    const uni = String(url.searchParams.get('university') || '').trim();
+    if (q.length < 2 && uni.length < 2) return send(res, 200, { people: [], posts: [] });
+    const postQuery = { hidden: { $ne: true } };
+    if (uni) postQuery.university = rx(uni);
+    if (q) postQuery.$or = [{ title: rx(q) }, { body: rx(q) }];
+    const people = q
+      ? await db.collection('users').find(
+        { role: 'student', status: { $ne: 'banned' }, handle: rx(q) },
+        { projection: { handle: 1, verified: 1, follower_count: 1, likes_count: 1, college_name: 1, created_at: 1 } }
+      ).limit(20).toArray()
+      : [];
     const posts = await db.collection('posts').find(
-      { hidden: { $ne: true }, $or: [{ title: rx(q) }, { body: rx(q) }] },
-      { projection: { section: 1, title: 1, unique_views: 1, source: 1, created_at: 1 } }
-    ).limit(20).toArray();
+      postQuery,
+      { projection: { section: 1, title: 1, university: 1, unique_views: 1, source: 1, created_at: 1 } }
+    ).sort({ created_at: -1 }).limit(30).toArray();
     return send(res, 200, {
       people: people.map((p) => ({ id: p._id, ...publicUser(p) })),
       posts: posts.map((p) => ({ id: p._id, ...p, _id: undefined }))
     });
+  }
+
+  if (method === 'GET' && pathname === '/api/universities') {
+    const list = await db.collection('posts').aggregate([
+      { $match: { hidden: { $ne: true }, university: { $nin: [null, ''] } } },
+      { $group: { _id: '$university', stories: { $sum: 1 }, reads: { $sum: '$unique_views' } } },
+      { $sort: { stories: -1 } },
+      { $limit: 60 }
+    ]).toArray();
+    return send(res, 200, { universities: list.map((x) => ({ name: x._id, stories: x.stories, reads: x.reads })) });
+  }
+
+  /* ---------- user profiles: follow + like people, reddit-style ---------- */
+  if (method === 'GET' && pathname.startsWith('/api/users/') && pathname.split('/').length === 4) {
+    const handle = decodeURIComponent(pathname.split('/')[3] || '');
+    const target = await db.collection('users').findOne({ handle });
+    if (!target || (target.status === 'banned' && (!u || u.role !== 'admin'))) return send(res, 404, { error: 'No such user.' });
+    const posts = await db.collection('posts')
+      .find({ user_id: target._id, hidden: { $ne: true } })
+      .sort({ created_at: -1 }).limit(30).toArray();
+    const [followed, liked] = u ? await Promise.all([
+      db.collection('follows').findOne({ follower_id: u._id, followee_id: target._id }),
+      db.collection('user_likes').findOne({ user_id: u._id, target_id: target._id })
+    ]) : [null, null];
+    return send(res, 200, {
+      user: {
+        ...publicUser(target),
+        chat_handle: await chatBot.getChatHandle(target._id),
+        followed_by_me: !!followed,
+        liked_by_me: !!liked
+      },
+      posts: posts.map((p) => pubPost({ ...p, handle: target.handle }))
+    });
+  }
+
+  if (method === 'POST' && /^\/api\/users\/[^/]+\/like$/.test(pathname)) {
+    if (!u) return send(res, 401, { error: 'Login first.' });
+    if (u.status === 'banned') return send(res, 403, { error: 'Banned.' });
+    const handle = decodeURIComponent(pathname.split('/')[3] || '');
+    const target = await db.collection('users').findOne({ handle });
+    if (!target || target._id === u._id) return send(res, 400, { error: 'Cannot like.' });
+    const key = { user_id: u._id, target_id: target._id };
+    const existing = await db.collection('user_likes').findOne(key);
+    let liked;
+    if (existing) {
+      await db.collection('user_likes').deleteOne(key);
+      await db.collection('users').updateOne({ _id: target._id }, { $inc: { likes_count: -1 } });
+      target.likes_count = Math.max(0, (target.likes_count || 0) - 1);
+      liked = false;
+    } else {
+      await db.collection('user_likes').updateOne(key, { $setOnInsert: { ...key, created_at: now() } }, { upsert: true });
+      await db.collection('users').updateOne({ _id: target._id }, { $inc: { likes_count: 1 } });
+      target.likes_count = (target.likes_count || 0) + 1;
+      liked = true;
+    }
+    return send(res, 200, { ok: true, likes: target.likes_count, liked });
   }
 
   if (method === 'GET' && pathname === '/api/me') {
@@ -604,7 +663,7 @@ async function handleApi(req, res, url) {
       { projection: { section: 1, title: 1, unique_views: 1, hidden: 1, created_at: 1 } }
     ).sort({ created_at: -1 }).toArray();
     return send(res, 200, {
-      me: u.role === 'admin' ? adminUser(u) : { ...publicUser(u), email: u.email, phone: u.phone, college_id: u.college_id, wallet: u.wallet },
+      me: u.role === 'admin' ? adminUser(u) : { ...publicUser(u), email: u.email_enc ? decryptEmail(u.email_enc) : null, college_id: u.college_id, wallet: u.wallet },
       posts: mine.map((p) => ({ id: p._id, ...p, _id: undefined })),
       payout: await payoutEligible(u)
     });
@@ -663,11 +722,17 @@ async function handleApi(req, res, url) {
     if (u.status === 'banned') return send(res, 403, { error: 'Banned.' });
     if (u.status === 'suspended') return send(res, 403, { error: 'Account suspended. You can read, not chat.' });
     const body = await readBody(req);
-    const receiverHandle = String(body.receiver_handle || '').trim();
+    let receiverHandle = String(body.receiver_handle || '').trim();
     const message = String(body.message || '').trim();
     const imageUrl = body.image_url || null;
     if (!receiverHandle) return send(res, 400, { error: 'Missing recipient.' });
-    if (!/^ch_[0-9a-f]{10}$/.test(receiverHandle)) return send(res, 400, { error: 'Chat handles look like ch_xxxxxxxxxx.' });
+    // you can DM by public handle (anonymous#11) or by chat handle (ch_xxxxxxxxxx)
+    if (/^anonymous#\d+$/i.test(receiverHandle)) {
+      const other = await db.collection('users').findOne({ handle: receiverHandle });
+      if (!other) return send(res, 404, { error: 'No such user.' });
+      receiverHandle = await chatBot.getChatHandle(other._id);
+    }
+    if (!/^ch_[0-9a-f]{10}$/.test(receiverHandle)) return send(res, 400, { error: 'Use a handle like anonymous#11 or ch_xxxxxxxxxx.' });
     if (receiverHandle === (await myChatHandle())) return send(res, 400, { error: 'You cannot chat with yourself.' });
     if (message.length < 1 && !imageUrl) return send(res, 400, { error: 'Write something or attach a photo.' });
     try {
@@ -824,9 +889,7 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/admin/users') {
     const q = String(url.searchParams.get('q') || '').trim();
     const query = { role: 'student' };
-    if (q) {
-      query.$or = [{ handle: rx(q) }, { email: rx(q) }, { phone: rx(q) }, { college_id: rx(q) }];
-    }
+    if (q) query.$or = [{ handle: rx(q) }, { college_name: rx(q) }, { college_id: rx(q) }];
     const users = await db.collection('users').find(query).sort({ created_at: -1 }).limit(200).toArray();
     return send(res, 200, { users: users.map(adminUser) });
   }
@@ -859,10 +922,11 @@ async function handleApi(req, res, url) {
       { $lookup: { from: 'users', localField: 'user_id', foreignField: '_id', as: 'u' } },
       { $addFields: {
         handle: { $arrayElemAt: ['$u.handle', 0] },
-        email: { $arrayElemAt: ['$u.email', 0] }
+        email_enc: { $arrayElemAt: ['$u.email_enc', 0] }
       } },
       { $project: { u: 0 } }
     ]).toArray();
+    for (const p of rows) p.email = p.email_enc ? decryptEmail(p.email_enc) : null;
     return send(res, 200, { posts: rows.map((p) => ({ id: p._id, ...p, _id: undefined })) });
   }
 
@@ -892,11 +956,12 @@ async function handleApi(req, res, url) {
       { $lookup: { from: 'users', localField: 'user_id', foreignField: '_id', as: 'u' } },
       { $addFields: {
         handle: { $arrayElemAt: ['$u.handle', 0] },
-        email: { $arrayElemAt: ['$u.email', 0] },
+        email_enc: { $arrayElemAt: ['$u.email_enc', 0] },
         follower_count: { $arrayElemAt: ['$u.follower_count', 0] }
       } },
       { $project: { u: 0 } }
     ]).toArray();
+    for (const p of rows) p.email = p.email_enc ? decryptEmail(p.email_enc) : null;
     return send(res, 200, { payouts: rows.map((p) => ({ id: p._id, ...p, _id: undefined })) });
   }
 
@@ -995,12 +1060,13 @@ async function handleApi(req, res, url) {
       { $limit: limit },
       { $lookup: { from: 'users', localField: 'sender_user_id', foreignField: '_id', as: 'sender' } },
       { $addFields: {
-        sender_email: { $arrayElemAt: ['$sender.email', 0] },
+        sender_email_enc: { $arrayElemAt: ['$sender.email_enc', 0] },
         sender_public_handle: { $arrayElemAt: ['$sender.handle', 0] },
         sender_status: { $arrayElemAt: ['$sender.status', 0] }
       } },
       { $project: { sender: 0 } }
     ]).toArray();
+    for (const m of messages) m.sender_email = m.sender_email_enc ? decryptEmail(m.sender_email_enc) : null;
     const total = await db.collection('chats').countDocuments({});
     return send(res, 200, { messages, page, total, pages: Math.max(1, Math.ceil(total / limit)) });
   }
@@ -1014,12 +1080,13 @@ async function handleApi(req, res, url) {
       { $limit: 100 },
       { $lookup: { from: 'users', localField: 'sender_user_id', foreignField: '_id', as: 'sender' } },
       { $addFields: {
-        sender_email: { $arrayElemAt: ['$sender.email', 0] },
+        sender_email_enc: { $arrayElemAt: ['$sender.email_enc', 0] },
         sender_public_handle: { $arrayElemAt: ['$sender.handle', 0] },
         sender_status: { $arrayElemAt: ['$sender.status', 0] }
       } },
       { $project: { sender: 0 } }
     ]).toArray();
+    for (const m of messages) m.sender_email = m.sender_email_enc ? decryptEmail(m.sender_email_enc) : null;
     return send(res, 200, { messages });
   }
 
@@ -1063,11 +1130,12 @@ async function handleApi(req, res, url) {
       { $limit: 150 },
       { $lookup: { from: 'users', localField: 'sender_user_id', foreignField: '_id', as: 'sender' } },
       { $addFields: {
-        sender_email: { $arrayElemAt: ['$sender.email', 0] },
+        sender_email_enc: { $arrayElemAt: ['$sender.email_enc', 0] },
         sender_status: { $arrayElemAt: ['$sender.status', 0] }
       } },
       { $project: { sender: 0 } }
     ]).toArray();
+    for (const m of messages) m.sender_email = m.sender_email_enc ? decryptEmail(m.sender_email_enc) : null;
     return send(res, 200, { messages });
   }
 
@@ -1145,14 +1213,14 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const email = String(body.email || '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter a valid email.' });
-    if (email === String(ADMIN.email).toLowerCase()) return send(res, 400, { error: 'That is already the main admin.' });
+    if (email === String(process.env.ADMIN_EMAIL || '').toLowerCase()) return send(res, 400, { error: 'That is already the main admin.' });
     await db.collection('admin_allowlist').updateOne(
       { email },
       { $setOnInsert: { _id: uid('adm'), email, added_by: u.handle, created_at: now() } },
       { upsert: true }
     );
     // if that person already has an account, promote them right away
-    const existing = await db.collection('users').findOne({ email });
+    const existing = await db.collection('users').findOne({ email_hash: emailHash(email) });
     if (existing && existing.role !== 'admin') await db.collection('users').updateOne({ _id: existing._id }, { $set: { role: 'admin', status: 'active' } });
     await audit(u._id, 'allowlist_add', email, email);
     return send(res, 200, { ok: true });
@@ -1163,8 +1231,8 @@ async function handleApi(req, res, url) {
     const email = String(body.email || '').trim().toLowerCase();
     await db.collection('admin_allowlist').deleteOne({ email });
     // do not demote the primary admin
-    if (email !== String(ADMIN.email).toLowerCase()) {
-      const target = await db.collection('users').findOne({ email, role: 'admin' });
+    if (email !== String(process.env.ADMIN_EMAIL || '').toLowerCase()) {
+      const target = await db.collection('users').findOne({ email_hash: emailHash(email), role: 'admin' });
       if (target) {
         await db.collection('users').updateOne({ _id: target._id }, { $set: { role: 'student' } });
         await db.collection('sessions').deleteMany({ user_id: target._id });
@@ -1210,15 +1278,45 @@ async function ensureCampaigns() {
   ]);
 }
 
+async function migrate() {
+  // 1) emails: raw → encrypted at rest + hash for lookup. Nobody reading the
+  //    database (not even a dump leak) can map a person to a handle.
+  const raw = await db.collection('users').find({ email: { $exists: true, $ne: null } }).toArray();
+  for (const u of raw) {
+    if (!u.email) continue;
+    await db.collection('users').updateOne({ _id: u._id }, {
+      $set: { email_enc: encryptEmail(u.email), email_hash: emailHash(u.email) },
+      $unset: { email: '', phone: '' }
+    });
+  }
+  // 2) handles: everyone becomes anonymous#N, identical to everyone else
+  const toRename = await db.collection('users').find({ role: 'student', handle: { $not: /^anonymous#\d+$/ } }).toArray();
+  for (const u of toRename) {
+    const h = await nextAnonHandle();
+    await db.collection('users').updateOne({ _id: u._id }, { $set: { handle: h } });
+  }
+  await db.collection('users').updateMany({ role: 'admin', handle: { $ne: 'desk' } }, { $set: { handle: 'desk' } });
+  // 3) backfill university on older student posts from their author
+  const needUni = await db.collection('posts').find({ source: 'student', university: { $in: [null, ''] } }).limit(500).toArray();
+  for (const p of needUni) {
+    const au = p.user_id ? await db.collection('users').findOne({ _id: p.user_id }, { projection: { college_name: 1 } }) : null;
+    if (au && au.college_name) await db.collection('posts').updateOne({ _id: p._id }, { $set: { university: au.college_name } });
+  }
+  // 4) OTP bookkeeping is gone
+  try { await db.collection('otps').drop(); } catch (e) {}
+  if (raw.length || toRename.length) console.log('migrated users → encrypted emails + anonymous handles (' + raw.length + ' emails, ' + toRename.length + ' handles)');
+}
+
 async function main() {
   await connectDB();
+  await migrate();
   ADMIN = await ensureAdmin();
   await ensureCampaigns();
   server.listen(PORT, () => {
     console.log('College Fest board on http://localhost:' + PORT);
     console.log('Student site  http://localhost:' + PORT + '/');
     console.log('Admin desk    http://localhost:' + PORT + '/admin');
-    console.log('Admin email   ' + ADMIN.email);
+    console.log('Admin email   ' + (process.env.ADMIN_EMAIL || 'not set'));
     blogBot.start();
     campaignBot.start();
     console.log('Campaign bot on, every ' + (Number(process.env.CAMPAIGN_BOT_INTERVAL_MS || 6 * 60 * 60 * 1000) / 36e5) + 'h');
