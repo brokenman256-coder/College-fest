@@ -158,6 +158,55 @@ async function currentUser(req) {
   return db.collection('users').findOne({ _id: row.user_id });
 }
 
+/* ---------- Google OAuth — university Google accounts only ---------- */
+const GOOGLE_CID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CSECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+function googleConfigured() { return !!(GOOGLE_CID && GOOGLE_CSECRET); }
+function baseUrlOf(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || 'http').split(',')[0];
+  return proto + '://' + (req.headers.host || 'localhost:' + PORT);
+}
+
+async function loginOrCreateByEmail(email) {
+  const ehash = emailHash(email);
+  let user = await db.collection('users').findOne({ email_hash: ehash });
+  let created = false;
+  if (user && user.status === 'banned') return { error: 'This account is banned.' };
+  if (!user) {
+    const handle = await nextAnonHandle();
+    const allow = await db.collection('admin_allowlist').findOne({ email });
+    const id = uid('usr');
+    await db.collection('users').insertOne({
+      _id: id,
+      email_enc: encryptEmail(email),
+      email_hash: ehash,
+      phone: null,
+      college_id: null,
+      college_name: universityFromEmail(email),
+      state: null,
+      place: null,
+      handle,
+      role: allow ? 'admin' : 'student',
+      status: 'active',
+      verified: false,
+      follower_count: 0,
+      likes_count: 0,
+      points: 0,
+      wallet: null,
+      created_at: now()
+    });
+    user = await db.collection('users').findOne({ _id: id });
+    created = true;
+  }
+  const token = crypto.randomBytes(24).toString('hex');
+  await db.collection('sessions').insertOne({
+    token,
+    user_id: user._id,
+    expires_at: Date.now() + 14 * 24 * 60 * 60 * 1000
+  });
+  return { user, created, token };
+}
+
 function postHandle(p) {
   if (p.source === 'student') return p.handle || 'anonymous';
   if (p.source === 'prompt') return 'campus_desk';
@@ -348,6 +397,7 @@ async function handleApi(req, res, url) {
       sections: SECTIONS,
       payout: { min_followers: MIN_FOLLOWERS, min_unique_views: MIN_UNIQUE_VIEWS, usd_per_unique_view: USD_PER_VIEW, min_payout_usd: MIN_PAYOUT_USD },
       me: u ? (u.role === 'admin' ? adminUser(u) : publicUser(u)) : null,
+      google_enabled: googleConfigured(),
       chat_handle: u ? await chatBot.getChatHandle(u._id) : null,
       campaigns: (await db.collection('campaigns').find({ on: true }).sort({ created_at: -1 }).limit(3)
         .project({ title: 1, body: 1, cta: 1, cta_link: 1 }).toArray()),
@@ -363,43 +413,71 @@ async function handleApi(req, res, url) {
     if (isSpyMail(email)) return send(res, 400, { error: 'That is a personal mailbox (Gmail / Outlook etc.) — not allowed here. Use your university email so everyone stays anonymous.' });
     if (!isCampusEmail(email)) return send(res, 400, { error: 'Use your university email — it should end in .edu (or .edu.in / .ac.in).' });
     if (!rateLimit('login:' + emailHash(email), 15, 10 * 60 * 1000)) return send(res, 429, { error: 'Too many attempts. Wait a few minutes.' });
-    const ehash = emailHash(email);
-    let user = await db.collection('users').findOne({ email_hash: ehash });
-    let created = false;
-    if (user && user.status === 'banned') return send(res, 403, { error: 'This account is banned.' });
-    if (!user) {
-      const handle = await nextAnonHandle();
-      const allow = await db.collection('admin_allowlist').findOne({ email });
-      const id = uid('usr');
-      await db.collection('users').insertOne({
-        _id: id,
-        email_enc: encryptEmail(email),
-        email_hash: ehash,
-        phone: null,
-        college_id: null,
-        college_name: universityFromEmail(email),
-        state: null,
-        place: null,
-        handle,
-        role: allow ? 'admin' : 'student',
-        status: 'active',
-        verified: false,
-        follower_count: 0,
-        likes_count: 0,
-        wallet: null,
-        created_at: now()
+    const r = await loginOrCreateByEmail(email);
+    if (r.error) return send(res, 403, { error: r.error });
+    setSession(res, r.token);
+    return send(res, 200, { ok: true, created: r.created, me: publicUser(r.user) });
+  }
+
+  /* ---------- Google sign-in ---------- */
+  if (method === 'GET' && pathname === '/api/auth/google') {
+    if (!googleConfigured()) return send(res, 400, { error: 'Google sign-in is not configured yet.' });
+    const state = crypto.randomBytes(16).toString('hex');
+    res.setHeader('set-cookie', `g_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`);
+    const redirect = baseUrlOf(req) + '/api/auth/google/callback';
+    const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
+      client_id: GOOGLE_CID,
+      redirect_uri: redirect,
+      response_type: 'code',
+      scope: 'openid email profile',
+      state,
+      prompt: 'select_account'
+    }).toString();
+    res.writeHead(302, { location: authUrl });
+    return res.end();
+  }
+
+  if (method === 'GET' && pathname === '/api/auth/google/callback') {
+    const back = (err) => {
+      const loc = err ? '/?auth_error=' + encodeURIComponent(err) : '/';
+      res.writeHead(302, { location: loc });
+      return res.end();
+    };
+    try {
+      const q = url.searchParams;
+      if (q.get('error')) return back('Google sign-in was cancelled.');
+      const state = q.get('state') || '';
+      if (!state || state !== (parseCookies(req).g_state || '')) return back('Google sign-in expired. Try again.');
+      if (!googleConfigured()) return back('Google sign-in is not configured.');
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code: q.get('code') || '',
+          client_id: GOOGLE_CID,
+          client_secret: GOOGLE_CSECRET,
+          redirect_uri: baseUrlOf(req) + '/api/auth/google/callback',
+          grant_type: 'authorization_code'
+        })
       });
-      user = await db.collection('users').findOne({ _id: id });
-      created = true;
+      const tok = await tokenRes.json();
+      if (!tok.access_token) return back('Google sign-in failed. Try again.');
+      const uiRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { authorization: 'Bearer ' + tok.access_token }
+      });
+      const ui = await uiRes.json();
+      const email = String(ui.email || '').trim().toLowerCase();
+      if (!email || !ui.email_verified) return back('Verify your email in that Google account first.');
+      if (isSpyMail(email)) return back('That is a personal Google account — use your university Google account.');
+      if (!isCampusEmail(email)) return back('Only university accounts (.edu / .edu.in / .ac.in) can enter Backbench.');
+      const r = await loginOrCreateByEmail(email);
+      if (r.error) return back(r.error);
+      setSession(res, r.token);
+      return back();
+    } catch (e) {
+      console.error('google oauth error:', e);
+      return back('Google sign-in failed. Try again.');
     }
-    const token = crypto.randomBytes(24).toString('hex');
-    await db.collection('sessions').insertOne({
-      token,
-      user_id: user._id,
-      expires_at: Date.now() + 14 * 24 * 60 * 60 * 1000
-    });
-    setSession(res, token);
-    return send(res, 200, { ok: true, created, me: publicUser(user) });
   }
 
   if (method === 'POST' && pathname === '/api/auth/admin-login') {
