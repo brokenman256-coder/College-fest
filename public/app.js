@@ -61,6 +61,18 @@ function readingTime(body) {
   const mins = Math.max(1, Math.round(String(body || '').split(/\s+/).length / 200));
   return mins + ' min read';
 }
+function timeAgo(iso) {
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (isNaN(s)) return '';
+  if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  if (s < 86400 * 30) return Math.round(s / 86400) + 'd ago';
+  return String(iso).slice(0, 10);
+}
+function earningsOf(p) {
+  const rate = (META.payout && META.payout.usd_per_unique_view) || 0.002;
+  return '$' + ((p.unique_views || 0) * rate).toFixed(2);
+}
 function initials(handle) {
   return String(handle || '?').replace(/^@?/, '').slice(0, 1).toUpperCase();
 }
@@ -95,14 +107,14 @@ function renderAuth() {
   authRoot.innerHTML = `
   <div class="auth-wrap">
     <div class="auth-hero">
-      <a class="brand" href="#" onclick="return false">College Fest</a>
-      <h1>Your campus. <em>Anonymous.</em> Always.</h1>
-      <p>No names. No passwords. No OTP codes. One university email — and you disappear behind a mask.</p>
+      <a class="brand has-logo" href="#" onclick="return false"><img src="/logo.svg" class="logo-img" alt="">Backbench</a>
+      <h1>Written from the <em>back bench.</em></h1>
+      <p>The anonymous campus paper. Students publish what really happens — and every read pays the writer.</p>
       <ul class="auth-points">
         <li>You appear as <b>anonymous#12</b> — everyone looks identical</li>
         <li>Your email is <b>encrypted</b> and never shown to anyone</li>
         <li>No tracking: no IP logs, no analytics, no fingerprinting</li>
-        <li>Follow people, like them, DM them — all anonymous</li>
+        <li>Paid per read — cash out in crypto at $100</li>
       </ul>
     </div>
     <div class="auth-card">
@@ -188,16 +200,8 @@ async function boot() {
 function paintLogo() {
   const a = document.querySelector('header.top h1 a');
   if (!a) return;
-  if (META.site_logo) {
-    a.classList.add('has-logo');
-    if (!a.querySelector('img')) {
-      const img = document.createElement('img');
-      img.className = 'logo-img';
-      img.alt = '';
-      img.src = META.site_logo;
-      a.prepend(img);
-    }
-  }
+  const img = a.querySelector('img');
+  if (img && META.site_logo) img.src = META.site_logo; // custom logo replaces the desk mark
 }
 
 async function updateChatBadge() {
@@ -251,17 +255,16 @@ async function showFeed() {
     };
   }
   document.getElementById('list').innerHTML = data.posts.map((p) => `
-    <article class="card post-card">
+    <article class="sheet-row">
       ${tagFor(p)}
       <h2><a href="#post/${esc(p.id)}">${esc(p.title)}</a></h2>
-      <div class="byline">
-        ${bylineHTML(p)}<span class="dot">·</span>
-        <span>${p.created_at.slice(0, 10)}</span><span class="dot">·</span>
-        <span>${readingTime(p.body)}</span><span class="dot">·</span>
-        <span class="mono">${p.unique_views} reads</span><span class="dot">·</span>
-        <span class="mono">♥ ${p.likes || 0}</span>
+      <div class="sheet-meta">
+        <b class="pseudo">${p.source === 'student' ? `<a class="anon-link" href="${anonLink(p.handle)}">@${esc(p.handle)}</a>` : esc(p.handle)}</b>
+        <span class="dot">·</span> ${timeAgo(p.created_at)}
+        <span class="dot">·</span> <span class="mono">${p.unique_views} reads</span>
+        <span class="dot">·</span> <span class="earn-chip">${p.source === 'student' ? earningsOf(p) : '—'}</span>
+        ${p.university ? `<span class="dot">·</span> ${esc(p.university)}` : ''}
       </div>
-      <p class="excerpt">${esc(p.body.slice(0, 220))}${p.body.length > 220 ? '…' : ''}</p>
     </article>`).join('') || '<p class="meta" style="padding:30px 0">No stories yet. Be the first to <a href="#write">write one</a>.</p>';
 }
 
@@ -290,7 +293,7 @@ async function showPost(id) {
     </div>
   </article>`;
   const shareUrl = location.origin + location.pathname + '#post/' + p.id;
-  const shareText = encodeURIComponent(p.title + ' — College Fest');
+  const shareText = encodeURIComponent(p.title + ' — Backbench');
   document.getElementById('like').onclick = async () => {
     try {
       const r = await api('/api/posts/' + p.id + '/like', { method: 'POST', body: {} });

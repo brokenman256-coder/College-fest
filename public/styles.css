@@ -324,3 +324,22 @@ table th,td{border-bottom:2px solid var(--rule)}
 .stat{border-width:2px}
 .warn{border-width:2px}
 .anon-note{border-left-width:3px}
+
+/* ---------- Backbench broadsheet feed ---------- */
+.broadsheet{border-top:2px solid var(--rule);margin-top:4px}
+.sheet-row{padding:16px 2px 13px;border-bottom:2px solid var(--rule)}
+.sheet-row h2{margin:0 0 6px;font-family:var(--font-head);font-weight:400;font-size:26px;line-height:1.2;letter-spacing:-.2px}
+.sheet-row h2 a{color:var(--ink);border:none;text-decoration:none}
+.sheet-row h2 a:hover{color:var(--accent)}
+.sheet-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft)}
+.sheet-meta .pseudo b{font-weight:600;color:var(--ink)}
+.sheet-meta .pseudo a{color:var(--ink);text-decoration:none;border-bottom:1px dashed var(--ink-soft)}
+.sheet-meta .pseudo a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+.earn-chip{background:var(--accent-2);color:var(--ink);padding:0 5px;border-radius:3px;font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.auth-hero .brand.has-logo::before{display:none}
+.brand .logo-img{margin-right:9px}
+.sheet-row .section-label{margin-bottom:4px}
+@media(max-width:640px){
+  .sheet-row{padding:13px 2px 11px}
+  .sheet-row h2{font-size:21px}
+}

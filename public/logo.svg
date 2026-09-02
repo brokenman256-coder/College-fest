@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Backbench desk mark">
+  <!-- desk-and-bench, side profile: 4 straight strokes, uniform 8px, squared ends -->
+  <g stroke="#14110F" stroke-width="8" stroke-linecap="butt" fill="none">
+    <path d="M14 20 H52"/>   <!-- desktop -->
+    <path d="M48 20 V46"/>   <!-- desk leg -->
+    <path d="M8 32 H30"/>    <!-- bench seat -->
+    <path d="M12 32 V50"/>   <!-- bench leg -->
+  </g>
+  <!-- the one hiding beneath the desk — or a full stop -->
+  <circle cx="30" cy="55" r="5.5" fill="#FF4A1C"/>
+</svg>

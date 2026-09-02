@@ -1336,7 +1336,7 @@ async function main() {
   ADMIN = await ensureAdmin();
   await ensureCampaigns();
   server.listen(PORT, () => {
-    console.log('College Fest board on http://localhost:' + PORT);
+    console.log('Backbench board on http://localhost:' + PORT);
     console.log('Student site  http://localhost:' + PORT + '/');
     console.log('Admin desk    http://localhost:' + PORT + '/admin');
     console.log('Admin email   ' + (process.env.ADMIN_EMAIL || 'not set'));
