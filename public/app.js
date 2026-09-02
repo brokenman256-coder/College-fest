@@ -156,7 +156,6 @@ function renderAuth() {
 async function boot() {
   META = await api('/api/meta');
   if (!META.me) return renderAuth();
-  if (META.me.role === 'admin') return showAdminChooser();
   paintLogo();
   authRoot.classList.add('hidden');
   shell.classList.remove('hidden');
@@ -192,54 +191,6 @@ function paintLogo() {
       a.prepend(img);
     }
   }
-  // bosses get a permanent desk switch in the header — students never see this
-  if (META.me && META.me.role === 'admin' && !document.getElementById('deskLink')) {
-    const b = document.createElement('button');
-    b.id = 'deskLink';
-    b.className = 'btn mini';
-    b.textContent = 'Desk →';
-    b.onclick = () => { location.href = '/admin'; };
-    who.appendChild(b);
-  }
-}
-
-function showAdminChooser() {
-  shell.classList.add('hidden');
-  authRoot.classList.remove('hidden');
-  authRoot.innerHTML = `
-  <div class="admin-choose">
-    <div class="auth-card" style="max-width:420px;margin:12vh auto">
-      <h2>Welcome back, boss ⚡</h2>
-      <p class="meta">Only admin accounts see this choice. Pick where to go:</p>
-      <div class="row" style="margin-top:14px">
-        <button class="btn accent" id="chDesk" style="flex:1">🛠 Open Admin Desk</button>
-        <button class="btn" id="chStudent" style="flex:1">Continue as student</button>
-      </div>
-    </div>
-  </div>`;
-  document.getElementById('chDesk').onclick = () => { location.href = '/admin'; };
-  document.getElementById('chStudent').onclick = () => {
-    authRoot.classList.add('hidden');
-    shell.classList.remove('hidden');
-    paintLogo();
-    who.innerHTML = '<b>@' + esc(META.me.handle) + '</b> ';
-    nav.innerHTML = '';
-    const tabs = [
-      ['feed', 'Stories'], ['write', 'Write'], ['chat', 'Chat'], ['search', 'Search'], ['events', 'Events'],
-      ['sourced', 'Sourced'], ['earn', 'Earn'], ['me', 'You']
-    ];
-    const page = pageName();
-    for (const [id, label] of tabs) {
-      const b = document.createElement('button');
-      b.textContent = label;
-      b.id = 'tab-' + id;
-      if (page === id) b.classList.add('on');
-      b.onclick = () => { location.hash = id; };
-      nav.appendChild(b);
-    }
-    route();
-    updateChatBadge();
-  };
 }
 
 async function updateChatBadge() {

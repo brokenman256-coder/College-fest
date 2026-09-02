@@ -155,7 +155,6 @@ article.post-full .body{font-size:18px;line-height:1.7;color:var(--text);white-s
 .fine{font-size:12px;color:var(--muted);margin-top:8px}
 
 /* ---------- admin chooser (admins only) ---------- */
-.admin-choose{min-height:70vh}
 .logo-img{width:24px;height:24px;border-radius:6px;margin-right:9px;vertical-align:-5px;background:var(--card-2);border:1px solid var(--border)}
 header.top h1 a.has-logo::before{display:none}
 .logo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}
