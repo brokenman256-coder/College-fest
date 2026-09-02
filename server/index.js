@@ -12,10 +12,19 @@ const PORT = Number(process.env.PORT || 8787);
 const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(24).toString('hex');
 const PUBLIC = path.join(__dirname, '..', 'public');
 const ALLOW_ANY_EMAIL = String(process.env.ALLOW_ANY_EMAIL || 'true') === 'true';
-const MIN_FOLLOWERS = 25;
-const MIN_UNIQUE_VIEWS = 200;
-const USD_PER_VIEW = 0.002;
-const MIN_PAYOUT_USD = 100; // withdrawal milestone — smaller requests are not paid out
+
+// payout economics — defaults, overridable live from the admin desk (Rates tab)
+// and persisted in the settings collection so they survive restarts.
+let RATES = {
+  min_followers: 25,
+  min_unique_views: 200,
+  usd_per_view: 0.002,
+  min_payout_usd: 100 // withdrawal milestone — smaller requests are not paid out
+};
+async function loadRates() {
+  const saved = await getSetting('payout_rates', null);
+  if (saved && typeof saved === 'object') RATES = { ...RATES, ...saved };
+}
 
 let ADMIN = null;
 
@@ -267,13 +276,14 @@ async function uniqueViewsOf(userId) {
 async function payoutEligible(u) {
   const views = await uniqueViewsOf(u._id);
   return {
-    ok: u.status === 'active' && (u.follower_count || 0) >= MIN_FOLLOWERS && views >= MIN_UNIQUE_VIEWS && Math.round(views * USD_PER_VIEW * 100) / 100 >= MIN_PAYOUT_USD && !!u.wallet,
+    ok: u.status === 'active' && (u.follower_count || 0) >= RATES.min_followers && views >= RATES.min_unique_views && Math.round(views * RATES.usd_per_view * 100) / 100 >= RATES.min_payout_usd && !!u.wallet,
     followers: u.follower_count || 0,
-    min_followers: MIN_FOLLOWERS,
+    min_followers: RATES.min_followers,
     unique_views: views,
-    min_unique_views: MIN_UNIQUE_VIEWS,
-    estimated_usd: Math.round(views * USD_PER_VIEW * 100) / 100,
-    min_payout_usd: MIN_PAYOUT_USD,
+    min_unique_views: RATES.min_unique_views,
+    estimated_usd: Math.round(views * RATES.usd_per_view * 100) / 100,
+    usd_per_view: RATES.usd_per_view,
+    min_payout_usd: RATES.min_payout_usd,
     wallet: u.wallet || null
   };
 }
@@ -394,7 +404,7 @@ async function handleApi(req, res, url) {
   if (method === 'GET' && pathname === '/api/meta') {
     return send(res, 200, {
       sections: SECTIONS,
-      payout: { min_followers: MIN_FOLLOWERS, min_unique_views: MIN_UNIQUE_VIEWS, usd_per_unique_view: USD_PER_VIEW, min_payout_usd: MIN_PAYOUT_USD },
+      payout: { min_followers: RATES.min_followers, min_unique_views: RATES.min_unique_views, usd_per_unique_view: RATES.usd_per_view, min_payout_usd: RATES.min_payout_usd },
       me: u ? (u.role === 'admin' ? adminUser(u) : publicUser(u)) : null,
       google_enabled: googleConfigured(),
       chat_handle: u ? await chatBot.getChatHandle(u._id) : null,
@@ -744,7 +754,10 @@ async function handleApi(req, res, url) {
     ).sort({ created_at: -1 }).toArray();
     return send(res, 200, {
       me: u.role === 'admin' ? adminUser(u) : { ...publicUser(u), email: u.email_enc ? decryptEmail(u.email_enc) : null, college_id: u.college_id, wallet: u.wallet },
-      posts: mine.map((p) => ({ id: p._id, ...p, _id: undefined })),
+      posts: mine.map((p) => ({
+        id: p._id, ...p, _id: undefined,
+        earned_usd: Math.round((p.unique_views || 0) * RATES.usd_per_view * 100) / 100
+      })),
       payout: await payoutEligible(u)
     });
   }
@@ -957,7 +970,7 @@ async function handleApi(req, res, url) {
       pending_payouts: pendingPayouts,
       pending_usd: (pendingAgg[0] && pendingAgg[0].sum) || 0,
       total_reads: (readsAgg[0] && readsAgg[0].sum) || 0,
-      usd_per_view: USD_PER_VIEW,
+      usd_per_view: RATES.usd_per_view,
       total_points: (pointsAgg[0] && pointsAgg[0].sum) || 0
     };
     const [top_posts, recent_users, top_users] = await Promise.all([
@@ -984,9 +997,76 @@ async function handleApi(req, res, url) {
     return send(res, 200, {
       users: users.map((u) => ({
         ...adminUser(u),
-        earned_usd: Math.round((vmap.get(u._id) || 0) * USD_PER_VIEW * 100) / 100
+        earned_usd: Math.round((vmap.get(u._id) || 0) * RATES.usd_per_view * 100) / 100
       }))
     });
+  }
+
+  /* ---------- wallets: per-user earnings control center ---------- */
+  if (method === 'GET' && pathname === '/api/admin/wallets') {
+    const q = String(url.searchParams.get('q') || '').trim();
+    const query = { role: 'student' };
+    if (q) query.$or = [{ handle: rx(q) }, { college_name: rx(q) }];
+    const viewSums = await db.collection('posts').aggregate([
+      { $match: { source: 'student' } },
+      { $group: { _id: '$user_id', views: { $sum: '$unique_views' } } }
+    ]).toArray();
+    const vmap = new Map(viewSums.map((x) => [x._id, x.views]));
+    const users = await db.collection('users').find(query).toArray();
+    const wallets = users.map((usr) => {
+      const views = vmap.get(usr._id) || 0;
+      const earned_usd = Math.round(views * RATES.usd_per_view * 100) / 100;
+      const payout_eligible = usr.status === 'active' && (usr.follower_count || 0) >= RATES.min_followers &&
+        views >= RATES.min_unique_views && earned_usd >= RATES.min_payout_usd && !!usr.wallet;
+      return { ...adminUser(usr), unique_views: views, earned_usd, payout_eligible };
+    }).filter((w) => w.wallet || w.earned_usd > 0).sort((a, b) => b.earned_usd - a.earned_usd);
+    return send(res, 200, { wallets });
+  }
+
+  if (method === 'GET' && pathname === '/api/admin/wallet') {
+    const id = String(url.searchParams.get('id') || '');
+    const target = await db.collection('users').findOne({ _id: id, role: 'student' });
+    if (!target) return send(res, 404, { error: 'Not found.' });
+    const posts = await db.collection('posts').find(
+      { user_id: id, source: 'student' },
+      { projection: { title: 1, section: 1, unique_views: 1, hidden: 1, created_at: 1, likes: 1 } }
+    ).sort({ unique_views: -1 }).toArray();
+    const payoutHistory = await db.collection('payouts').find({ user_id: id }).sort({ created_at: -1 }).toArray();
+    const totalViews = posts.reduce((s, p) => s + (p.unique_views || 0), 0);
+    return send(res, 200, {
+      user: adminUser(target),
+      payout: await payoutEligible(target),
+      totals: { unique_views: totalViews, earned_usd: Math.round(totalViews * RATES.usd_per_view * 100) / 100 },
+      posts: posts.map((p) => ({
+        id: p._id, title: p.title, section: p.section, unique_views: p.unique_views || 0,
+        earned_usd: Math.round((p.unique_views || 0) * RATES.usd_per_view * 100) / 100,
+        hidden: !!p.hidden, created_at: p.created_at
+      })),
+      payouts: payoutHistory.map((p) => ({ id: p._id, amount_usd: p.amount_usd, status: p.status, wallet: p.wallet, created_at: p.created_at }))
+    });
+  }
+
+  /* ---------- payout rates: admin-tunable economics ---------- */
+  if (method === 'GET' && pathname === '/api/admin/payout-settings') {
+    return send(res, 200, { rates: RATES });
+  }
+
+  if (method === 'POST' && pathname === '/api/admin/payout-settings') {
+    const body = await readBody(req);
+    const clamp = (v, lo, hi, dflt) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
+    };
+    const next = {
+      min_followers: Math.round(clamp(body.min_followers, 0, 1000000, RATES.min_followers)),
+      min_unique_views: Math.round(clamp(body.min_unique_views, 0, 10000000, RATES.min_unique_views)),
+      usd_per_view: clamp(body.usd_per_view, 0, 10, RATES.usd_per_view),
+      min_payout_usd: clamp(body.min_payout_usd, 1, 1000000, RATES.min_payout_usd)
+    };
+    RATES = next;
+    await setSetting('payout_rates', RATES);
+    await audit(u._id, 'payout_rates_update', null, JSON.stringify(RATES));
+    return send(res, 200, { ok: true, rates: RATES });
   }
 
   if (method === 'POST' && pathname === '/api/admin/user-boost') {
@@ -1446,6 +1526,7 @@ async function migrate() {
 
 async function main() {
   await connectDB();
+  await loadRates();
   await migrate();
   ADMIN = await ensureAdmin();
   await ensureCampaigns();

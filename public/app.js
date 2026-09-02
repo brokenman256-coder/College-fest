@@ -733,6 +733,14 @@ async function showEarn() {
       </div>
       <p class="fine" style="margin-top:10px">Payouts count <b>unique real reads only</b>. Fake views never count — the desk reviews every request before it is paid.</p>
     </div>
+    <div class="card">
+      <h3>Earnings by story</h3>
+      ${d.posts.filter((x) => !x.hidden).map((x) => `<div class="mini-row">
+        <span class="section-label">${esc(x.section || '')}</span>
+        <b>${esc(x.title)}</b>
+        <span class="meta">${x.unique_views} unique reads · <b style="color:var(--accent)">$${Number(x.earned_usd || 0).toFixed(2)}</b></span>
+      </div>`).join('') || '<p class="meta">Nothing published yet — <a href="#write">write your first story</a>.</p>'}
+    </div>
   </div>`;
   document.getElementById('saveW').onclick = async () => {
     try { await api('/api/me/wallet', { method: 'POST', body: { wallet: document.getElementById('wallet').value } }); toast('Wallet saved'); showEarn(); }
@@ -763,7 +771,7 @@ async function showMe() {
         <button class="btn" id="earnLink">Go to Earn →</button>
       </div>
       <h3 style="margin-top:18px">Your stories</h3>
-      ${d.posts.map((x) => `<div class="meta" style="padding:4px 0"><a href="#post/${esc(x.id)}">${esc(x.title)}</a> · ${x.unique_views} reads ${x.hidden ? '· hidden' : ''}</div>`).join('') || '<p class="meta">None yet — <a href="#write">write your first story</a>.</p>'}
+      ${d.posts.map((x) => `<div class="meta" style="padding:4px 0"><a href="#post/${esc(x.id)}">${esc(x.title)}</a> · ${x.unique_views} reads · $${Number(x.earned_usd || 0).toFixed(2)} earned ${x.hidden ? '· hidden' : ''}</div>`).join('') || '<p class="meta">None yet — <a href="#write">write your first story</a>.</p>'}
       <div class="row" style="margin-top:16px">
         <button class="btn danger" id="out">Log out</button>
       </div>

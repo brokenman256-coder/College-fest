@@ -3,24 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Backbench — Admin Desk</title>
+  <title>Backbench — Control Room</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="desk">
-<div class="wrap">
-  <header class="top">
-    <div>
-      <h1>Desk</h1>
-      <div class="sub">You see identities. Students do not. Ban / suspend from here.</div>
+<div class="desk-shell">
+  <aside class="desk-sidebar">
+    <div class="desk-brand"><img src="/logo.svg" class="logo-img" alt="">Backbench<span class="desk-tag">Control Room</span></div>
+    <nav class="tabs" id="nav"></nav>
+    <div class="desk-foot">
+      <div id="who" class="meta"></div>
     </div>
-    <div style="flex:1"></div>
-    <div id="who" class="meta"></div>
-  </header>
-  <nav class="tabs" id="nav"></nav>
-  <div id="app"></div>
+  </aside>
+  <main class="desk-main">
+    <header class="top desk-topbar">
+      <div>
+        <h1>Desk</h1>
+        <div class="sub">You see identities. Students do not. Ban / suspend from here.</div>
+      </div>
+      <div class="desk-shield-badge" title="Blur-on-blur, PrintScreen block, devtools deterrence, right-click and printing disabled">🛡 Capture shield on</div>
+    </header>
+    <div id="app"></div>
+  </main>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/admin.js"></script>
